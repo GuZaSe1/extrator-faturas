@@ -1,0 +1,2 @@
+<?php echo '<h1>Ambiente de DESENVOLVIMENTO (Dev)</h1>FUNCIONOUUUUUUUUUUUUUUUUUUUUUUUUU'; 
+?>
