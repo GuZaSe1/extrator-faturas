@@ -17,6 +17,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['fatura'])) {
     $pdf = $parser->parseFile($file['tmp_name']);
     $text = $pdf->getText();
 
+    
     if (empty(trim($text))) {
         throw new Exception("O PDF parece estar vazio ou é uma imagem (precisa de OCR).");
     }
