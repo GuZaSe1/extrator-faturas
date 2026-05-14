@@ -2,22 +2,24 @@
 require 'vendor/autoload.php';
 require 'processador_ia.php';
 
-use Smalot\PdfParser\Parser;
+use Spatie\PdfToText\Pdf;
 
-function mensagemErroUpload(int $codigo_erro): string
-{
-    $mensagens = [
-        UPLOAD_ERR_OK => 'Upload realizado com sucesso.',
-        UPLOAD_ERR_INI_SIZE => 'Arquivo excede upload_max_filesize do php.ini.',
-        UPLOAD_ERR_FORM_SIZE => 'Arquivo excede MAX_FILE_SIZE do formulario.',
-        UPLOAD_ERR_PARTIAL => 'Upload parcial.',
-        UPLOAD_ERR_NO_FILE => 'Nenhum arquivo enviado.',
-        UPLOAD_ERR_NO_TMP_DIR => 'Diretorio temporario ausente.',
-        UPLOAD_ERR_CANT_WRITE => 'Falha ao escrever arquivo em disco.',
-        UPLOAD_ERR_EXTENSION => 'Upload interrompido por extensao PHP.',
-    ];
+if (!function_exists('mensagemErroUpload')) {
+    function mensagemErroUpload(int $codigo_erro): string
+    {
+        $mensagens = [
+            UPLOAD_ERR_OK => 'Upload realizado com sucesso.',
+            UPLOAD_ERR_INI_SIZE => 'Arquivo excede upload_max_filesize do php.ini.',
+            UPLOAD_ERR_FORM_SIZE => 'Arquivo excede MAX_FILE_SIZE do formulario.',
+            UPLOAD_ERR_PARTIAL => 'Upload parcial.',
+            UPLOAD_ERR_NO_FILE => 'Nenhum arquivo enviado.',
+            UPLOAD_ERR_NO_TMP_DIR => 'Diretorio temporario ausente.',
+            UPLOAD_ERR_CANT_WRITE => 'Falha ao escrever arquivo em disco.',
+            UPLOAD_ERR_EXTENSION => 'Upload interrompido por extensao PHP.',
+        ];
 
-    return $mensagens[$codigo_erro] ?? 'Erro de upload desconhecido.';
+        return $mensagens[$codigo_erro] ?? 'Erro de upload desconhecido.';
+    }
 }
 
 $debug = true;
@@ -66,16 +68,12 @@ try {
     }
 
     // 1. Validação básica de segurança
-    $inicio_validacao_upload = microtime(true);
-
     if ($arquivo['error'] !== UPLOAD_ERR_OK) {
         if ($debug) {
             registrarDebug('error', 'Falha na validacao de upload', [
                 'run_id' => $id_debug,
                 'error' => $arquivo['error'],
                 'error_message' => mensagemErroUpload((int) $arquivo['error']),
-                'step_duration_seconds' => round(microtime(true) - $inicio_validacao_upload, 4),
-                'elapsed_seconds' => round(microtime(true) - $inicio_requisicao, 4),
             ]);
         }
 
@@ -88,20 +86,10 @@ try {
                 'run_id' => $id_debug,
                 'received_type' => $arquivo['type'],
                 'expected_type' => 'application/pdf',
-                'step_duration_seconds' => round(microtime(true) - $inicio_validacao_upload, 4),
-                'elapsed_seconds' => round(microtime(true) - $inicio_requisicao, 4),
             ]);
         }
 
         throw new Exception("Apenas PDFs são aceitos.");
-    }
-
-    if ($debug) {
-        registrarDebug('debug', 'Validacao de upload concluida', [
-            'run_id' => $id_debug,
-            'step_duration_seconds' => round(microtime(true) - $inicio_validacao_upload, 4),
-            'elapsed_seconds' => round(microtime(true) - $inicio_requisicao, 4),
-        ]);
     }
 
     if ($debug) {
@@ -114,16 +102,16 @@ try {
 
     // 2. Extração de Texto do PDF
     $inicio_extracao_pdf = microtime(true);
-    $leitor_pdf = new Parser();
-    $pdf = $leitor_pdf->parseFile($arquivo['tmp_name']);
-    $texto = $pdf->getText();
+    $texto = (new Pdf())
+        ->setPdf($arquivo['tmp_name'])
+        ->setOptions(['layout'])
+        ->text();
 
     if ($debug) {
         registrarDebug('debug', 'Texto extraido do PDF', [
             'run_id' => $id_debug,
             'text_summary' => resumoDebug($texto, 2000),
             'text_full' => $texto,
-            'page_count' => method_exists($pdf, 'getPages') ? count($pdf->getPages()) : null,
             'step_duration_seconds' => round(microtime(true) - $inicio_extracao_pdf, 4),
             'elapsed_seconds' => round(microtime(true) - $inicio_requisicao, 4),
         ]);
@@ -134,8 +122,6 @@ try {
             registrarDebug('error', 'PDF sem texto extraivel', [
                 'run_id' => $id_debug,
                 'text_length' => strlen($texto),
-                'step_duration_seconds' => round(microtime(true) - $inicio_extracao_pdf, 4),
-                'elapsed_seconds' => round(microtime(true) - $inicio_requisicao, 4),
             ]);
         }
 
@@ -151,7 +137,6 @@ try {
     }
 
     $processador_ia = new processador_ia();
-    $inicio_processador_ia = microtime(true);
     $dados_gerais = $processador_ia->processarTextoFatura($texto, $id_debug, $debug);
 
     if ($debug) {
@@ -159,14 +144,13 @@ try {
             'run_id' => $id_debug,
             'result_type' => gettype($dados_gerais),
             'result_keys' => is_array($dados_gerais) ? array_keys($dados_gerais) : null,
-            'ai_step_duration_seconds' => round(microtime(true) - $inicio_processador_ia, 4),
             'duration_seconds' => round(microtime(true) - $inicio_requisicao, 4),
         ]);
     }
 
     // 4. Exibição do Resultado
     echo "<h2>Dados Extraídos com Sucesso!</h2>";
-    echo "<pre>" . json_encode($dados_gerais, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . "</pre>";
+    echo "<pre>" . json_encode($dados_gerais, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) . "</pre>";
     if ($debug) {
         echo "<p><strong>Debug Run ID:</strong> " . htmlspecialchars($id_debug, ENT_QUOTES, 'UTF-8') . "</p>";
     }

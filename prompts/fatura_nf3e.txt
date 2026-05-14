@@ -23,13 +23,15 @@ REGRAS IMPORTANTES:
 10. Produtos são apenas itens de cobrança de energia, demanda, encargos, UFER, CIP, deduções ou benefícios.
 11. Extraia os produtos na mesma ordem em que aparecem no texto.
 12. Para "cod_subgrupo", retorne somente o código, exemplo: "A4".
-13. Para "codigo_modalidade", retorne somente a modalidade tarifária, exemplo: "VERDE", "AZUL", "CONVENCIONAL" ou "BRANCA".
+13. Para "codigo_modalidade", retorne somente a modalidade tarifária, exemplo: "VERDE", "AZUL", "THS_VERDE" ou "THS_AZUL".
 14. Se aparecer uma linha como "A - A4 - VERDE - Comercial - Comercial":
     - cod_subgrupo deve ser "A4"
     - codigo_modalidade deve ser "VERDE"
 15. O campo "num_cnpj_emit" deve ser o CNPJ da distribuidora, não a linha digitável, não o código de barras e não o número do PIX.
 16. Se o CNPJ do destinatário estiver mascarado, retorne exatamente como aparecer no texto.
-17. O campo "cod_unidade_consumo" deve priorizar o número após "Número UC". Se aparecer "0204744068 / 200009463405", retorne "0204744068".
+17. O campo "cod_unidade_consumo" não pode ser o mesmo que a chave_acesso, data, ou textos. Ela pode ser valores como: 3.532.572.012-20, 0204744068 / 200009463405, 6287000, 11.808.991.018-60
+
+
 
 ESTRUTURA OBRIGATÓRIA:
 
