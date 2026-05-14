@@ -22,7 +22,11 @@ if (!function_exists('mensagemErroUpload')) {
     }
 }
 
-$debug = true;
+$debug_config = $_POST['debug'] ?? $_GET['debug'] ?? getenv('EXTRATOR_DEBUG');
+if ($debug_config === false || $debug_config === null) {
+    $debug_config = false;
+}
+$debug = filter_var($debug_config, FILTER_VALIDATE_BOOLEAN);
 $id_debug = uniqid('req_', true);
 $inicio_requisicao = microtime(true);
 
@@ -80,11 +84,20 @@ try {
         throw new Exception("Erro no upload: " . mensagemErroUpload((int) $arquivo['error']));
     }
 
-    if ($arquivo['type'] !== 'application/pdf') {
+    $tamanho_maximo = 4000 * 1024;
+    if (($arquivo['size'] ?? 0) > $tamanho_maximo) {
+        throw new Exception("Arquivo muito grande. Envie um PDF de até 4000 KB.");
+    }
+
+    $detector_mime = new finfo(FILEINFO_MIME_TYPE);
+    $mime_real = $detector_mime->file($arquivo['tmp_name']) ?: '';
+
+    if ($mime_real !== 'application/pdf') {
         if ($debug) {
             registrarDebug('error', 'Arquivo rejeitado por MIME type', [
                 'run_id' => $id_debug,
                 'received_type' => $arquivo['type'],
+                'detected_type' => $mime_real,
                 'expected_type' => 'application/pdf',
             ]);
         }
@@ -111,7 +124,6 @@ try {
         registrarDebug('debug', 'Texto extraido do PDF', [
             'run_id' => $id_debug,
             'text_summary' => resumoDebug($texto, 2000),
-            'text_full' => $texto,
             'step_duration_seconds' => round(microtime(true) - $inicio_extracao_pdf, 4),
             'elapsed_seconds' => round(microtime(true) - $inicio_requisicao, 4),
         ]);
@@ -150,7 +162,8 @@ try {
 
     // 4. Exibição do Resultado
     echo "<h2>Dados Extraídos com Sucesso!</h2>";
-    echo "<pre>" . json_encode($dados_gerais, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) . "</pre>";
+    $json_saida = json_encode($dados_gerais, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    echo "<pre>" . htmlspecialchars($json_saida, ENT_QUOTES, 'UTF-8') . "</pre>";
     if ($debug) {
         echo "<p><strong>Debug Run ID:</strong> " . htmlspecialchars($id_debug, ENT_QUOTES, 'UTF-8') . "</p>";
     }
