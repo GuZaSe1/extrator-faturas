@@ -119,10 +119,11 @@ class processador_ia
             "prompt" => $prompt_completo,
             "stream" => false,
             "format" => "json",
+            "keep_alive" => "30m",
             "options" => [
                 "temperature" => 0,
-                "num_ctx" => 8192,
-                "num_thread" => 5
+                "num_ctx" => 12288,
+                "num_thread" => 6
             ]
         ];
 
