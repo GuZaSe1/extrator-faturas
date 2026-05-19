@@ -1,16 +1,16 @@
 <?php
 
 /**
- * Centraliza pequenas normalizações usadas antes da extração da NF3-e.
+ * Centraliza pequenas normalizações usadas antes da extração da NF3-e
  *
  * Esses helpers reduzem variações comuns para deixar regexes e
- * comparações numéricas mais previsíveis nas outras classes do módulo.
+ * comparações numéricas mais previsíveis nas outras classes do módulo
  */
 class Nf3eInvoiceText
 {
 
-    // Padroniza quebras de linha e espaços do texto bruto da fatura.
-    public static function fNormalizar(string $texto): string
+    // Padroniza quebras de linha e espaços do texto bruto da fatura
+    public static function fNormalizaDadosNf3e(string $texto): string
     {
         $texto = str_replace(["\r\n", "\r"], "\n", $texto);
         $texto = preg_replace('/[ \t]+/', ' ', $texto);
@@ -20,23 +20,23 @@ class Nf3eInvoiceText
     }
 
     /**
-     * Remove qualquer caractere que não seja dígito.
+     * Remove qualquer caractere que não seja dígito
      *
      * Usado para comparar CNPJ, chave de acesso e outros códigos numéricos que
-     * podem vir com máscara, espaços ou ruído do OCR.
+     * podem vir com máscara, espaços ou ruído do OCR
      */
-    public static function FsomenteDigitos(string $valor): string
+    public static function fSomenteDigitos(string $valor): string
     {
         return preg_replace('/\D+/', '', $valor);
     }
 
     /**
-     * Normaliza a referência para comparação e saída consistente.
+     * Normaliza a referência para comparação e saída consistente
      *
      * Atualmente preserva referências no formato MM/AAAA e apenas aplica
-     * maiúsculas/trim nos demais formatos reconhecidos pelo texto da fatura.
+     * maiúsculas/trim nos demais formatos reconhecidos pelo texto da fatura
      */
-    public static function fNormalizarReferencia(string $referencia): string
+    public static function fNormalizaReferencia(string $referencia): string
     {
         $referencia = strtoupper(trim($referencia));
 
@@ -45,5 +45,11 @@ class Nf3eInvoiceText
         }
 
         return $referencia;
+    }
+
+    // Identifica totais e linhas tributárias que não devem entrar como produto
+    public static function fLinhaSemProduto(string $linha): bool
+    {
+        return (bool) preg_match('/^\s*(?:PIS(?:\/PASEP)?|PASEP|COFINS|ICMS|BASE\s+DE\s+C[ÁA]LCULO|AL[ÍI]QUOTA|TRIBUTO|SUBTOTAL|TOTAL)\b/iu', $linha);
     }
 }

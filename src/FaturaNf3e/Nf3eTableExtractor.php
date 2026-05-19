@@ -12,31 +12,31 @@ require_once __DIR__ . '/Nf3eInvoiceText.php';
 class Nf3eTableExtractor
 {
     // Agrega as extrações tabulares disponíveis sem criar chaves vazias
-    public function fExtrair(string $texto_filtrado): array
+    public function fExtraiDadosTabela(string $texto_filtrado): array
     {
         $dados = [];
 
-        $produtos = $this->fExtrairProdutos($texto_filtrado);
+        $produtos = $this->fExtraiProdutos($texto_filtrado);
         if ($produtos !== []) $dados['produtos'] = $produtos;
 
-        $historico = $this->fExtrairHistorico($texto_filtrado);
+        $historico = $this->fExtraiHistorico($texto_filtrado);
         if ($historico !== []) $dados['historico'] = $historico;
 
         return $dados;
     }
 
     // Varre as linhas do texto e mantém apenas as que parecem itens faturados
-    private function fExtrairProdutos(string $texto): array
+    private function fExtraiProdutos(string $texto): array
     {
-        $linhas = explode("\n", Nf3eInvoiceText::fNormalizar($texto));
+        $linhas = explode("\n", Nf3eInvoiceText::fNormalizaDadosNf3e($texto));
         $produtos = [];
 
         foreach ($linhas as $linha) {
             $linha = trim($linha);
 
-            if (!$this->ehLinhaProduto($linha)) continue;
+            if (!$this->fIdentificaLinhaProduto($linha)) continue;
 
-            $produto = $this->fParsearLinhaProduto($linha);
+            $produto = $this->fParseLinhaProduto($linha);
             if ($produto !== null) $produtos[] = $produto;
         }
 
@@ -44,7 +44,7 @@ class Nf3eTableExtractor
     }
 
     // Divide uma linha de item em descrição, unidade, quantidade, preço e valor
-    private function fParsearLinhaProduto(string $linha): ?array
+    private function fParseLinhaProduto(string $linha): ?array
     {
         $tokens = preg_split('/\s+/', trim($linha));
         if (!$tokens || count($tokens) < 2) return null;
@@ -54,11 +54,11 @@ class Nf3eTableExtractor
 
         // A descrição fica antes do primeiro número monetário/decimal relevante
         for ($indice = 0; $indice < $total_tokens; $indice++) {
-            if (!$this->ehNumeroBrasileiro($tokens[$indice])) continue;
+            if (!$this->fFormatoNumericoBr($tokens[$indice])) continue;
 
             $numeros_restantes = 0;
             for ($subindice = $indice; $subindice < $total_tokens; $subindice++) {
-                if ($this->ehNumeroBrasileiro($tokens[$subindice])) $numeros_restantes++;
+                if ($this->fFormatoNumericoBr($tokens[$subindice])) $numeros_restantes++;
             }
 
             if ($numeros_restantes >= 1) {
@@ -73,17 +73,17 @@ class Nf3eTableExtractor
         $fim_descricao = $inicio_valores;
 
         // Quando a unidade vem imediatamente antes dos valores, ela não faz parte da descrição
-        if ($inicio_valores > 0 && $this->ehUnidadeProduto($tokens[$inicio_valores - 1])) {
+        if ($inicio_valores > 0 && $this->fUnidadeDeProduto($tokens[$inicio_valores - 1])) {
             $unidade = strtoupper($tokens[$inicio_valores - 1]);
             $fim_descricao--;
         }
 
         $descricao = trim(implode(' ', array_slice($tokens, 0, $fim_descricao)));
-        if ($descricao === '' || $this->ehLinhaNaoProduto($descricao)) return null;
+        if ($descricao === '' || Nf3eInvoiceText::fLinhaSemProduto($descricao)) return null;
 
         $numeros = [];
         for ($indice = $inicio_valores; $indice < $total_tokens; $indice++) {
-            if ($this->ehNumeroBrasileiro($tokens[$indice])) $numeros[] = $tokens[$indice];
+            if ($this->fFormatoNumericoBr($tokens[$indice])) $numeros[] = $tokens[$indice];
         }
 
         if ($numeros === []) return null;
@@ -109,9 +109,9 @@ class Nf3eTableExtractor
     }
 
     // Extrai linhas de histórico no formato MES/ANO seguido por colunas numéricas
-    private function fExtrairHistorico(string $texto): array
+    private function fExtraiHistorico(string $texto): array
     {
-        $linhas = explode("\n", Nf3eInvoiceText::fNormalizar($texto));
+        $linhas = explode("\n", Nf3eInvoiceText::fNormalizaDadosNf3e($texto));
         $historico = [];
 
         foreach ($linhas as $linha) {
@@ -141,28 +141,22 @@ class Nf3eTableExtractor
     }
 
     // Confirma se a linha parece um item de fatura com descrição e valor
-    private function ehLinhaProduto(string $linha): bool
+    private function fIdentificaLinhaProduto(string $linha): bool
     {
-        if ($linha === '' || $this->ehLinhaNaoProduto($linha)) return false;
+        if ($linha === '' || Nf3eInvoiceText::fLinhaSemProduto($linha)) return false;
         if (!preg_match('/-?\d{1,3}(?:\.\d{3})*,\d+|-?\d+,\d+/u', $linha)) return false;
 
         return (bool) preg_match('/\b(?:CONSUMO|DEMANDA|UFER|REATIV|ENCARGO|CIP|CONTRIB\.?\s+ILUM|BENEF[ÍI]CIO|DEDU[ÇC][ÃA]O|DIF\.?\s*(?:FATUR|DESC)|PARCELA\s+(?:TUSD|TE))\b/iu', $linha);
     }
 
-    // Identifica totais e linhas tributárias que não devem entrar como produto
-    private function ehLinhaNaoProduto(string $linha): bool
-    {
-        return (bool) preg_match('/^\s*(?:PIS(?:\/PASEP)?|PASEP|COFINS|ICMS|BASE\s+DE\s+C[ÁA]LCULO|AL[ÍI]QUOTA|TRIBUTO|SUBTOTAL|TOTAL)\b/iu', $linha);
-    }
-
     // Reconhece números no formato brasileiro usado nas tabelas da fatura
-    private function ehNumeroBrasileiro(string $valor): bool
+    private function fFormatoNumericoBr(string $valor): bool
     {
         return (bool) preg_match('/^-?\d{1,3}(?:\.\d{3})*,\d+$|^-?\d+,\d+$/u', $valor);
     }
 
     // Reconhece unidades que indicam consumo ou demanda faturada
-    private function ehUnidadeProduto(string $valor): bool
+    private function fUnidadeDeProduto(string $valor): bool
     {
         return (bool) preg_match('/^(?:KW|KWH|KVARH|MWH)$/iu', $valor);
     }

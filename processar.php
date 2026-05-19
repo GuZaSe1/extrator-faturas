@@ -149,7 +149,7 @@ try {
     }
 
     $processador_ia = new processador_ia();
-    $dados_gerais = $processador_ia->processarTextoFatura($texto, $id_debug, $debug);
+    $dados_gerais = $processador_ia->fProcessaTextoNf3e($texto, $id_debug, $debug);
 
     if ($debug) {
         registrarDebug('info', 'Processamento concluido com sucesso', [

@@ -1,7 +1,7 @@
  EXTRATOR DE FATURAS NF3-E COM INTELIGENCIA ARTIFICIAL LOCAL
 
 SOBRE O PROJETO
-Este projeto é um sistema automatizado desenvolvido em PHP, desenhado para fExtrair dados estruturados (JSON) de faturas de energia elétrica (NF3-e) em formato PDF
+Este projeto é um sistema automatizado desenvolvido em PHP, desenhado para extrair dados estruturados (JSON) de faturas de energia elétrica (NF3-e) em formato PDF
 
 A grande vantagem desta arquitetura é a utilização de Inteligência Artificial (Ollama) correr 100% localmente. Isto garante total privacidade de dados sensíveis dos clientes 
 e elimina custos recorrentes com APIs externas

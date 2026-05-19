@@ -13,11 +13,11 @@ class Nf3eInvoiceTextFilter
 {
 
     // Filtra linhas relevantes mantendo contexto imediato de rótulos importantes
-    public function fFiltrar(string $texto): string
+    public function fFiltraTextoNf3e(string $texto): string
     {
         // Remove um fragmento recorrente de OCR que costuma grudar em descrições de demanda
         $texto = preg_replace('/(?:0,000)?DEMFP\s*/iu', ' ', $texto);
-        $texto = Nf3eInvoiceText::fNormalizar($texto);
+        $texto = Nf3eInvoiceText::fNormalizaDadosNf3e($texto);
 
         if ($texto === '') return $texto;
 
@@ -67,7 +67,7 @@ class Nf3eInvoiceTextFilter
             $linha = preg_replace('/^\d{6,}(?=N[ÚU]mero\s+UC)/iu', '', $linha);
 
             // Descarta sequências numéricas longas sem rótulo, comuns em códigos de barras/linhas digitáveis
-            if (preg_match('/^[\d\s-]+$/u', $linha) && strlen(Nf3eInvoiceText::FsomenteDigitos($linha)) > 44) continue;
+            if (preg_match('/^[\d\s-]+$/u', $linha) && strlen(Nf3eInvoiceText::fSomenteDigitos($linha)) > 44) continue;
 
             $descartar = false;
             foreach ($padroes_descartar as $padrao) {
@@ -90,7 +90,7 @@ class Nf3eInvoiceTextFilter
 
             if (!$manter) continue;
 
-            $linha = $this->fLimparLinhaProduto($linha);
+            $linha = $this->fLimpaLinhaProduto($linha);
             $linhas_filtradas[] = $linha;
 
             // Alguns rótulos vêm sozinhos; nesses casos, as próximas linhas carregam os valores
@@ -104,7 +104,7 @@ class Nf3eInvoiceTextFilter
 
 
     // Remove prefixos acidentais antes da descrição real de um item faturado
-    private function fLimparLinhaProduto(string $linha): string
+    private function fLimpaLinhaProduto(string $linha): string
     {
         // Primeiro tenta capturar a descrição e todo o restante da linha em uma única regex
         $descricoes_produto_regex = implode('|', [

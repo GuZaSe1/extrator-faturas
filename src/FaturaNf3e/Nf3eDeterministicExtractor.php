@@ -17,12 +17,12 @@ class Nf3eDeterministicExtractor
      * CNPJ do emitente, série e número da NF diretamente da estrutura oficial. Em
      * seguida, padrões mais específicos do texto podem confirmar ou sobrescrever campos
      */
-    public function fExtrair(string $texto): array
+    public function fExtraiCamposNf3e(string $texto): array
     {
         $campos = [];
-        $texto_normalizado = Nf3eInvoiceText::fNormalizar($texto);
+        $texto_normalizado = Nf3eInvoiceText::fNormalizaDadosNf3e($texto);
 
-        $chave_acesso = $this->fExtrairChaveAcesso($texto);
+        $chave_acesso = $this->fExtraiChaveAcesso($texto);
         if ($chave_acesso !== null) {
             $campos['chave_acesso'] = $chave_acesso;
 
@@ -33,7 +33,7 @@ class Nf3eDeterministicExtractor
             }
         }
 
-        $nota_fiscal = $this->fBuscarPrimeiro($texto_normalizado, [
+        $nota_fiscal = $this->fBuscaPrimeiro($texto_normalizado, [
             '/NOTA\s+FISCAL\s*(?:N[ºO.]*)?\s*[-:]?\s*(\d{6,12})/iu',
             '/\bNF\s*(?:N[ºO.]*)?\s*[-:]?\s*(\d{6,12})/iu',
         ]);
@@ -42,7 +42,7 @@ class Nf3eDeterministicExtractor
             $campos['num_nf'] = $nota_fiscal;
         }
 
-        $serie = $this->fBuscarPrimeiro($texto_normalizado, [
+        $serie = $this->fBuscaPrimeiro($texto_normalizado, [
             '/S[ÉE]RIE\s*[-:]?\s*(\d{1,3})/iu',
         ]);
 
@@ -50,21 +50,21 @@ class Nf3eDeterministicExtractor
             $campos['serie'] = str_pad($serie, 3, '0', STR_PAD_LEFT);
         }
 
-        $campos = array_merge($campos, $this->fExtrairCabecalhoFatura($texto_normalizado));
-        $campos = array_merge($campos, $this->fExtrairResumoPagamento($texto_normalizado));
+        $campos = array_merge($campos, $this->fExtraiCabecalhoFatura($texto_normalizado));
+        $campos = array_merge($campos, $this->fExtraiResumoPagamento($texto_normalizado));
 
         // Evita confundir CNPJ do destinatário com o do emitente já derivado da chave
-        $cnpj_destinatario = $this->fBuscarPrimeiro($texto_normalizado, [
+        $cnpj_destinatario = $this->fBuscaPrimeiro($texto_normalizado, [
             '/(?:PAGADOR\s*\/\s*CPF:.*?|PAGADOR:.*?|CLIENTE:.*?|CONSUMIDOR:.*?|DESTINAT[ÁA]RIO:.*?)CNPJ(?:\/CPF)?\s*[:\-]?\s*([0-9*.]{2}\.[0-9*.]{3}\.[0-9*.]{3}\/[0-9*.]{4}-[0-9*.]{2})/ius',
             '/CNPJ(?:\/CPF)?\s*[:\-]?\s*([0-9*.]{2}\.[0-9*.]{3}\.[0-9*.]{3}\/[0-9*.]{4}-[0-9*.]{2})/iu',
             '/CNPJ(?:\/CPF)?\s*[:\-]?\s*([0-9*]{14})/iu',
         ]);
 
-        if ($cnpj_destinatario !== null && (!isset($campos['num_cnpj_emit']) || Nf3eInvoiceText::FsomenteDigitos($cnpj_destinatario) !== $campos['num_cnpj_emit'])) {
+        if ($cnpj_destinatario !== null && (!isset($campos['num_cnpj_emit']) || Nf3eInvoiceText::fSomenteDigitos($cnpj_destinatario) !== $campos['num_cnpj_emit'])) {
             $campos['num_cnpj_dest'] = $cnpj_destinatario;
         }
 
-        $unidade_consumo = $this->fBuscarPrimeiro($texto_normalizado, [
+        $unidade_consumo = $this->fBuscaPrimeiro($texto_normalizado, [
             '/N[ÚU]MERO\s+UC[^\n]*(?:\n[^\n]*){0,4}\n\s*(\d{4,20})\s*\/\s*\d{4,20}/iu',
             '/N[ÚU]MERO\s+UC\s+(\d{4,20})(?:\s*\/\s*\d{4,20})?/iu',
             '/\bUC\s*[:\-]?\s*(\d{4,20})(?:\s*\/\s*\d{4,20})?/iu',
@@ -76,26 +76,26 @@ class Nf3eDeterministicExtractor
             $campos['cod_unidade_consumo'] = $unidade_consumo;
         }
 
-        $campos = array_merge($campos, $this->fExtrairDatasLeitura($texto_normalizado));
+        $campos = array_merge($campos, $this->fExtraiDatasLeitura($texto_normalizado));
 
-        $pct_pis = $this->fExtrairPercentualTributo($texto_normalizado, '(?:PIS(?:\/PASEP)?|PASEP)');
+        $pct_pis = $this->fExtraiPercentualTributo($texto_normalizado, '(?:PIS(?:\/PASEP)?|PASEP)');
         if ($pct_pis !== null) {
             $campos['pct_pis'] = $pct_pis;
         }
 
-        $pct_cofins = $this->fExtrairPercentualTributo($texto_normalizado, 'COFINS');
+        $pct_cofins = $this->fExtraiPercentualTributo($texto_normalizado, 'COFINS');
         if ($pct_cofins !== null) {
             $campos['pct_cofins'] = $pct_cofins;
         }
 
-        return array_merge($campos, $this->fExtrairClassificacao($texto_normalizado));
+        return array_merge($campos, $this->fExtraiClassificacao($texto_normalizado));
     }
 
     /**
      * Lê campos do cabeçalho da fatura, cobrindo layouts em linha única e layouts
      * onde os rótulos ficam empilhados acima dos valores
      */
-    private function fExtrairCabecalhoFatura(string $texto): array
+    private function fExtraiCabecalhoFatura(string $texto): array
     {
         $campos = [];
 
@@ -115,7 +115,7 @@ class Nf3eDeterministicExtractor
         }
 
         if (!isset($campos['referencia']) && preg_match('/REFER[ÊE]NCIA\s*[:\-]?\s*([A-Z]{3}\/\d{2,4}|\d{2}\/\d{4})/iu', $texto, $resultado)) {
-            $campos['referencia'] = Nf3eInvoiceText::fNormalizarReferencia($resultado[1]);
+            $campos['referencia'] = Nf3eInvoiceText::fNormalizaReferencia($resultado[1]);
         }
 
         if (!isset($campos['dat_vencimento']) && preg_match('/DATA\s+DE\s+VENCIMENTO\s*[:\-]?\s*(\d{2}\/\d{2}\/\d{4})/iu', $texto, $resultado)) {
@@ -133,12 +133,12 @@ class Nf3eDeterministicExtractor
      * Captura o resumo de pagamento quando referência, valor e vencimento aparecem
      * juntos em uma faixa de cobrança separada do cabeçalho principal
      */
-    private function fExtrairResumoPagamento(string $texto): array
+    private function fExtraiResumoPagamento(string $texto): array
     {
         $campos = [];
 
         if (preg_match('/\b([A-Z]{3}\/\d{2,4})\b\s+R\$\s*[*\s]*([0-9.]+,\d{2})\s+(\d{2}\/\d{2}\/\d{4})/iu', $texto, $resultado)) {
-            $campos['referencia'] = Nf3eInvoiceText::fNormalizarReferencia($resultado[1]);
+            $campos['referencia'] = Nf3eInvoiceText::fNormalizaReferencia($resultado[1]);
             $campos['val_total'] = $resultado[2];
             $campos['dat_vencimento'] = $resultado[3];
         }
@@ -156,7 +156,7 @@ class Nf3eDeterministicExtractor
      * O padrão espera leitura anterior, leitura atual, quantidade de dias e próxima
      * leitura na mesma sequência, que é o formato usual da área de consumo
      */
-    private function fExtrairDatasLeitura(string $texto): array
+    private function fExtraiDatasLeitura(string $texto): array
     {
         $campos = [];
 
@@ -173,7 +173,7 @@ class Nf3eDeterministicExtractor
      * Reaproveita a mesma lógica para PIS/PASEP e COFINS, variando apenas o nome
      * do tributo aceito pela regex
      */
-    private function fExtrairPercentualTributo(string $texto, string $tributo_regex): ?string
+    private function fExtraiPercentualTributo(string $texto, string $tributo_regex): ?string
     {
         if (preg_match('/\b' . $tributo_regex . '\b\s+[0-9.]+,\d{2}\s+([0-9.]+,\d{1,4})%?/iu', $texto, $resultado)) {
             return rtrim($resultado[1], '%');
@@ -188,7 +188,7 @@ class Nf3eDeterministicExtractor
      * Primeiro exige dígito verificador válido; se o OCR corromper o DV, aceita
      * como fallback uma chave de 44 dígitos do modelo 66 encontrada no mesmo fluxo
      */
-    private function fExtrairChaveAcesso(string $texto): ?string
+    private function fExtraiChaveAcesso(string $texto): ?string
     {
         $janelas_prioritarias = [];
 
@@ -226,7 +226,7 @@ class Nf3eDeterministicExtractor
         $candidatas = [];
 
         foreach ($resultados[0] as $trecho) {
-            $digitos = Nf3eInvoiceText::FsomenteDigitos($trecho);
+            $digitos = Nf3eInvoiceText::fSomenteDigitos($trecho);
             $tamanho = strlen($digitos);
 
             for ($indice = 0; $indice <= $tamanho - 44; $indice++) {
@@ -247,11 +247,11 @@ class Nf3eDeterministicExtractor
 
         $base = substr($chave, 0, 43);
 
-        return $this->fCalcularDigitoChaveAcesso($base) === (int) $chave[43];
+        return $this->fCalculaDigitoChaveAcesso($base) === (int) $chave[43];
     }
 
     // Calcula o dígito verificador da chave de acesso pelo módulo 11 oficial
-    private function fCalcularDigitoChaveAcesso(string $base): int
+    private function fCalculaDigitoChaveAcesso(string $base): int
     {
         $soma = 0;
         $peso = 2;
@@ -272,7 +272,7 @@ class Nf3eDeterministicExtractor
      * As primeiras regexes tratam linhas completas de classificação com maior
      * confiança; os padrões finais buscam cada campo separadamente como fallback
      */
-    private function fExtrairClassificacao(string $texto): array
+    private function fExtraiClassificacao(string $texto): array
     {
         $modalidades = 'VERDE|AZUL|CONVENCIONAL|BRANCA';
 
@@ -292,7 +292,7 @@ class Nf3eDeterministicExtractor
 
         $campos = [];
 
-        $subgrupo = $this->fBuscarPrimeiro($texto, [
+        $subgrupo = $this->fBuscaPrimeiro($texto, [
             '/SUBGRUPO\s*[:\-]?\s*(A[1-4]|B[1-4])\b/iu',
             '/\b(A[1-4]|B[1-4])\b/u',
         ]);
@@ -301,7 +301,7 @@ class Nf3eDeterministicExtractor
             $campos['cod_subgrupo'] = strtoupper($subgrupo);
         }
 
-        $modalidade = $this->fBuscarPrimeiro($texto, [
+        $modalidade = $this->fBuscaPrimeiro($texto, [
             '/MODALIDADE\s*(?:TARIF[ÁA]RIA)?\s*[:\-]?\s*(' . $modalidades . ')\b/iu',
             '/THS_(' . $modalidades . ')\b/iu',
         ]);
@@ -318,7 +318,7 @@ class Nf3eDeterministicExtractor
      *
      * A ordem dos padrões deve ir do mais específico para o mais permissivo
      */
-    private function fBuscarPrimeiro(string $texto, array $padroes): ?string
+    private function fBuscaPrimeiro(string $texto, array $padroes): ?string
     {
         foreach ($padroes as $padrao) {
             if (preg_match($padrao, $texto, $resultado)) {

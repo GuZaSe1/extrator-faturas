@@ -34,7 +34,7 @@ class Nf3eResultNormalizer
     ];
 
     // Converte chaves com hífen para underline
-    public function fNormalizarChaves(array $resultado): array
+    public function fNormalizaChaves(array $resultado): array
     {
         $resultado_normalizado = [];
 
@@ -46,10 +46,10 @@ class Nf3eResultNormalizer
     }
 
     // Monta a resposta final com campos obrigatórios ordenados e listas saneadas
-    public function fNormalizarResultadoFinal(array $resultado): array
+    public function fNormalizaResultadoFinal(array $resultado): array
     {
-        $resultado['produtos'] = $this->fNormalizarProdutos($resultado['produtos'] ?? []);
-        $resultado['historico'] = $this->fNormalizarHistorico($resultado['historico'] ?? []);
+        $resultado['produtos'] = $this->fNormalizaProdutos($resultado['produtos'] ?? []);
+        $resultado['historico'] = $this->fNormalizaHistorico($resultado['historico'] ?? []);
 
         // Primeiro aplica o contrato fixo para manter ordem e valores padrão
         $ordenado = [];
@@ -68,7 +68,7 @@ class Nf3eResultNormalizer
     }
 
     // Normaliza os itens de fatura e descarta linhas que não representam produto
-    private function fNormalizarProdutos($produtos): array
+    private function fNormalizaProdutos($produtos): array
     {
         if (!is_array($produtos)) return [];
 
@@ -78,14 +78,14 @@ class Nf3eResultNormalizer
             if (!is_array($produto)) continue;
 
             $descricao = trim((string) ($produto['descricao'] ?? ''));
-            if ($descricao === '' || $this->ehLinhaNaoProduto($descricao)) continue;
+            if ($descricao === '' || Nf3eInvoiceText::fLinhaSemProduto($descricao)) continue;
 
             $normalizados[] = [
                 'descricao' => $descricao,
-                'unidade' => $this->fNormalizarValorVazio($produto['unidade'] ?? null, true),
-                'quantidade' => $this->fNormalizarValorVazio($produto['quantidade'] ?? null),
-                'preco' => $this->fNormalizarValorVazio($produto['preco'] ?? null),
-                'valor' => $this->fNormalizarValorVazio($produto['valor'] ?? null),
+                'unidade' => $this->fNormalizaValorVazio($produto['unidade'] ?? null, true),
+                'quantidade' => $this->fNormalizaValorVazio($produto['quantidade'] ?? null),
+                'preco' => $this->fNormalizaValorVazio($produto['preco'] ?? null),
+                'valor' => $this->fNormalizaValorVazio($produto['valor'] ?? null),
             ];
         }
 
@@ -93,7 +93,7 @@ class Nf3eResultNormalizer
     }
 
     // Normaliza o histórico de consumo mantendo apenas registros com descrição
-    private function fNormalizarHistorico($historico): array
+    private function fNormalizaHistorico($historico): array
     {
         if (!is_array($historico)) return [];
 
@@ -107,11 +107,11 @@ class Nf3eResultNormalizer
 
             $normalizados[] = [
                 'descricao' => $descricao,
-                'consumoFP' => $this->fNormalizarValorVazio($item['consumoFP'] ?? null),
-                'consumoP' => $this->fNormalizarValorVazio($item['consumoP'] ?? null),
-                'demandaFP' => $this->fNormalizarValorVazio($item['demandaFP'] ?? null),
-                'demandaP' => $this->fNormalizarValorVazio($item['demandaP'] ?? null),
-                'consumoRE' => $this->fNormalizarValorVazio($item['consumoRE'] ?? null),
+                'consumoFP' => $this->fNormalizaValorVazio($item['consumoFP'] ?? null),
+                'consumoP' => $this->fNormalizaValorVazio($item['consumoP'] ?? null),
+                'demandaFP' => $this->fNormalizaValorVazio($item['demandaFP'] ?? null),
+                'demandaP' => $this->fNormalizaValorVazio($item['demandaP'] ?? null),
+                'consumoRE' => $this->fNormalizaValorVazio($item['consumoRE'] ?? null),
             ];
         }
 
@@ -119,7 +119,7 @@ class Nf3eResultNormalizer
     }
 
     // Padroniza valores vazios como null e aplica maiúsculas quando o campo exigir
-    private function fNormalizarValorVazio($valor, bool $maiusculo = false)
+    private function fNormalizaValorVazio($valor, bool $maiusculo = false)
     {
         if ($valor === null) return null;
 
@@ -127,11 +127,5 @@ class Nf3eResultNormalizer
         if ($valor === '') return null;
 
         return $maiusculo ? strtoupper($valor) : $valor;
-    }
-
-    // Identifica linhas de tributos/totais que podem aparecer junto dos produtos
-    private function ehLinhaNaoProduto(string $linha): bool
-    {
-        return (bool) preg_match('/^\s*(?:PIS(?:\/PASEP)?|PASEP|COFINS|ICMS|BASE\s+DE\s+C[ÁA]LCULO|AL[ÍI]QUOTA|TRIBUTO|SUBTOTAL|TOTAL)\b/iu', $linha);
     }
 }

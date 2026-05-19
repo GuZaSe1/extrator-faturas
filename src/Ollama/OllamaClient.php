@@ -29,12 +29,7 @@ class OllamaClient
         return $this->modelo;
     }
 
-    public function tempoConexaoSegundos(): int
-    {
-        return $this->tempo_conexao_segundos;
-    }
-
-    public function calcularNumCtx(string $prompt): int
+    public function fCalculaNumCtx(string $prompt): int
     {
         $tokens_estimados = (int) ceil(strlen($prompt) / 3);
 

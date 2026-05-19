@@ -1,33 +1,32 @@
 <?php
 
 require_once __DIR__ . '/src/Debug/DebugLogger.php';
+
 require_once __DIR__ . '/src/Ollama/OllamaClient.php';
 require_once __DIR__ . '/src/Ollama/OllamaPromptBuilder.php';
 require_once __DIR__ . '/src/Ollama/IaJsonResponseSanitizer.php';
+
 require_once __DIR__ . '/src/FaturaNf3e/Nf3eInvoiceTextFilter.php';
 require_once __DIR__ . '/src/FaturaNf3e/Nf3eDeterministicExtractor.php';
 require_once __DIR__ . '/src/FaturaNf3e/Nf3eTableExtractor.php';
 require_once __DIR__ . '/src/FaturaNf3e/Nf3eResultNormalizer.php';
 
-function app_logger(): DebugLogger
+function registrarDebug(string $nivel, string $mensagem, array $contexto = []): void
 {
+    // Mantém uma única instância do logger durante a requisição.
     static $logger = null;
 
     if ($logger === null) {
         $logger = new DebugLogger(__DIR__ . '/logs');
     }
 
-    return $logger;
-}
-
-function registrarDebug(string $nivel, string $mensagem, array $contexto = []): void
-{
-    app_logger()->registrar($nivel, $mensagem, $contexto);
+    $logger->fRegistraEvento($nivel, $mensagem, $contexto);
 }
 
 function resumoDebug(?string $valor, int $limite = 8192): array
 {
-    return DebugLogger::resumir($valor, $limite);
+    // Evita gravar prompts, textos de PDF ou respostas grandes por inteiro no log
+    return DebugLogger::fResumeTextoParaDebug($valor, $limite);
 }
 
 class processador_ia
@@ -43,6 +42,7 @@ class processador_ia
     private $normalizador_resultado;
     private $limpador_json;
 
+    // Campos mínimos para devolver resultado sem acionar a IA principal
     private const CAMPOS_ESSENCIAIS_RESPOSTA_RAPIDA = [
         'chave_acesso',
         'num_cnpj_emit',
@@ -67,6 +67,7 @@ class processador_ia
         ?Nf3eResultNormalizer $normalizador_resultado = null,
         ?IaJsonResponseSanitizer $limpador_json = null
     ) {
+        // Permite injetar dependências em testes, mas cria os componentes padrão no uso normal
         $this->cliente_ollama = $cliente_ollama ?: new OllamaClient();
         $this->construtor_prompt = $construtor_prompt ?: new OllamaPromptBuilder(__DIR__ . '/prompts/fatura_nf3e.txt');
         $this->filtro_texto = $filtro_texto ?: new Nf3eInvoiceTextFilter();
@@ -76,7 +77,7 @@ class processador_ia
         $this->limpador_json = $limpador_json ?: new IaJsonResponseSanitizer();
     }
 
-    public function processarTextoFatura(string $texto, ?string $id_debug = null, bool $debug = true)
+    public function fProcessaTextoNf3e(string $texto, ?string $id_debug = null, bool $debug = true)
     {
         $id_debug = $id_debug ?: uniqid('ia_', true);
         $inicio_processamento = microtime(true);
@@ -86,13 +87,14 @@ class processador_ia
                 'run_id' => $id_debug,
                 'api_url' => $this->cliente_ollama->urlApi(),
                 'model' => $this->cliente_ollama->modelo(),
-                'prompt_path' => $this->construtor_prompt->caminhoPrompt(),
+                'prompt_path' => $this->construtor_prompt->fCaminhoPrompt(),
                 'input_text' => resumoDebug($texto, 2000),
             ]);
         }
 
         $inicio_filtro = microtime(true);
-        $texto_filtrado = $this->filtro_texto->fFiltrar($texto);
+        // Reduz o texto bruto aos trechos que ajudam a extração e o prompt
+        $texto_filtrado = $this->filtro_texto->fFiltraTextoNf3e($texto);
 
         if ($debug) {
             registrarDebug('debug', 'IA: texto filtrado para prompt', [
@@ -107,8 +109,9 @@ class processador_ia
         }
 
         $inicio_deterministico = microtime(true);
-        $campos_fixos = $this->extrator_deterministico->fExtrair($texto);
-        $campos_tabulados = $this->extrator_tabulado->fExtrair($texto_filtrado);
+        // Primeiro tenta extrair tudo por regras: campos fixos, produtos e histórico
+        $campos_fixos = $this->extrator_deterministico->fExtraiCamposNf3e($texto);
+        $campos_tabulados = $this->extrator_tabulado->fExtraiDadosTabela($texto_filtrado);
         $dados_deterministicos = array_merge($campos_tabulados, $campos_fixos);
 
         if ($debug) {
@@ -123,8 +126,9 @@ class processador_ia
             ]);
         }
 
-        if ($this->podeResponderSemIa($dados_deterministicos)) {
-            $resultado_deterministico = $this->normalizador_resultado->fNormalizarResultadoFinal($dados_deterministicos);
+        // Caminho rápido: se as regras já encontraram o essencial, não chama o modelo
+        if ($this->fValidaRespostaDeterministica($dados_deterministicos)) {
+            $resultado_deterministico = $this->normalizador_resultado->fNormalizaResultadoFinal($dados_deterministicos);
 
             if ($debug) {
                 registrarDebug('info', 'IA: resposta gerada pelo caminho rápido determinístico', [
@@ -138,11 +142,12 @@ class processador_ia
         }
 
         $campos_complementares = [];
-        $campos_ausentes = $this->camposEssenciaisAusentes($dados_deterministicos);
+        // Quando faltam poucos campos, usa uma chamada curta para complementar apenas eles
+        $campos_ausentes = $this->fListaCamposEssenciaisAusentes($dados_deterministicos);
 
-        if ($this->podeTentarComplementoIa($dados_deterministicos, $campos_ausentes)) {
+        if ($this->fValidaComplementoIa($dados_deterministicos, $campos_ausentes)) {
             $inicio_complemento = microtime(true);
-            $campos_complementares = $this->extrairCamposAusentesComIa(
+            $campos_complementares = $this->fExtraiCamposAusentesIa(
                 $texto,
                 $texto_filtrado,
                 $campos_ausentes,
@@ -151,21 +156,22 @@ class processador_ia
                 $inicio_processamento
             );
 
-            $dados_deterministicos = $this->aplicarComplementoIa($dados_deterministicos, $campos_complementares, $campos_ausentes);
+            $dados_deterministicos = $this->fAplicaComplementoIa($dados_deterministicos, $campos_complementares, $campos_ausentes);
 
             if ($debug) {
                 registrarDebug('info', 'IA: complemento de campos ausentes finalizado', [
                     'run_id' => $id_debug,
                     'requested_fields' => $campos_ausentes,
                     'filled_fields' => array_keys($campos_complementares),
-                    'still_missing_fields' => $this->camposEssenciaisAusentes($dados_deterministicos),
+                    'still_missing_fields' => $this->fListaCamposEssenciaisAusentes($dados_deterministicos),
                     'step_duration_seconds' => $this->segundosDesde($inicio_complemento),
                     'elapsed_seconds' => $this->segundosDesde($inicio_processamento),
                 ]);
             }
 
-            if ($this->podeResponderSemIa($dados_deterministicos)) {
-                $resultado_complementado = $this->normalizador_resultado->fNormalizarResultadoFinal($dados_deterministicos);
+            // Se o complemento fechou todos os requisitos, também evita a chamada completa
+            if ($this->fValidaRespostaDeterministica($dados_deterministicos)) {
+                $resultado_complementado = $this->normalizador_resultado->fNormalizaResultadoFinal($dados_deterministicos);
 
                 if ($debug) {
                     registrarDebug('info', 'IA: resposta gerada com complemento mínimo', [
@@ -181,20 +187,21 @@ class processador_ia
 
         $inicio_template = microtime(true);
 
-        if (!file_exists($this->construtor_prompt->caminhoPrompt())) {
+        // Fallback: monta o prompt completo quando o caminho determinístico não basta
+        if (!file_exists($this->construtor_prompt->fCaminhoPrompt())) {
             if ($debug) {
                 registrarDebug('error', 'IA: template de prompt nao encontrado', [
                     'run_id' => $id_debug,
-                    'prompt_path' => $this->construtor_prompt->caminhoPrompt(),
+                    'prompt_path' => $this->construtor_prompt->fCaminhoPrompt(),
                     'step_duration_seconds' => $this->segundosDesde($inicio_template),
                     'elapsed_seconds' => $this->segundosDesde($inicio_processamento),
                 ]);
             }
 
-            throw new Exception("Template de prompt não encontrado em: " . $this->construtor_prompt->caminhoPrompt());
+            throw new Exception("Template de prompt não encontrado em: " . $this->construtor_prompt->fCaminhoPrompt());
         }
 
-        $template = $this->construtor_prompt->carregarTemplate();
+        $template = $this->construtor_prompt->fCarregaTemplate();
 
         if ($debug) {
             registrarDebug('debug', 'IA: template carregado', [
@@ -207,6 +214,7 @@ class processador_ia
         }
 
         $inicio_prompt = microtime(true);
+        // O template define as regras; o texto filtrado entra no placeholder
         $prompt_completo = str_replace('{{TEXTO_PDF}}', $texto_filtrado, $template);
 
         if ($debug) {
@@ -224,7 +232,7 @@ class processador_ia
             $prompt_completo,
             $this->tempo_requisicao_segundos,
             4096,
-            $this->cliente_ollama->calcularNumCtx($prompt_completo),
+            $this->cliente_ollama->fCalculaNumCtx($prompt_completo),
             $id_debug,
             $debug,
             $inicio_processamento
@@ -238,7 +246,8 @@ class processador_ia
         }
 
         $inicio_decode_resultado = microtime(true);
-        $json_limpo = $this->limpador_json->limpar($json_bruto ?? '');
+        // A resposta pode vir com markdown ou texto extra; o sanitizer isola o JSON
+        $json_limpo = $this->limpador_json->fExtraiJsonDaRespostaIa($json_bruto ?? '');
         $resultado_decodificado = json_decode($json_limpo, true);
         $erro_json_interno = json_last_error_msg();
 
@@ -259,9 +268,10 @@ class processador_ia
         }
 
         $inicio_campos_deterministicos = microtime(true);
-        $resultado_decodificado = $this->normalizador_resultado->fNormalizarChaves($resultado_decodificado);
+        // Dados determinísticos têm prioridade sobre o retorno da IA
+        $resultado_decodificado = $this->normalizador_resultado->fNormalizaChaves($resultado_decodificado);
         $resultado_decodificado = array_merge($resultado_decodificado, $campos_tabulados, $campos_fixos, $campos_complementares);
-        $resultado_decodificado = $this->normalizador_resultado->fNormalizarResultadoFinal($resultado_decodificado);
+        $resultado_decodificado = $this->normalizador_resultado->fNormalizaResultadoFinal($resultado_decodificado);
 
         if ($debug) {
             registrarDebug('info', 'IA: campos determinísticos aplicados', [
@@ -282,47 +292,40 @@ class processador_ia
         return round(microtime(true) - $inicio, 4);
     }
 
-    private function podeResponderSemIa(array $dados): bool
+    private function fValidaRespostaDeterministica(array $dados): bool
     {
+        // Variável de ambiente útil para testes comparativos contra o modelo
         $forcar_ia = getenv('EXTRATOR_FORCAR_IA');
-        if (filter_var($forcar_ia, FILTER_VALIDATE_BOOLEAN)) {
-            return false;
-        }
+        if (filter_var($forcar_ia, FILTER_VALIDATE_BOOLEAN)) return false;
 
-        return $this->camposEssenciaisAusentes($dados) === []
-            && !empty($dados['produtos'])
-            && is_array($dados['produtos']);
+        return $this->fListaCamposEssenciaisAusentes($dados) === [] && !empty($dados['produtos']) && is_array($dados['produtos']);
     }
 
-    private function camposEssenciaisAusentes(array $dados): array
+    private function fListaCamposEssenciaisAusentes(array $dados): array
     {
         $ausentes = [];
 
         foreach (self::CAMPOS_ESSENCIAIS_RESPOSTA_RAPIDA as $campo) {
-            if (empty($dados[$campo])) {
-                $ausentes[] = $campo;
-            }
+            if (empty($dados[$campo])) $ausentes[] = $campo;
         }
 
         return $ausentes;
     }
 
-    private function podeTentarComplementoIa(array $dados, array $campos_ausentes): bool
+    private function fValidaComplementoIa(array $dados, array $campos_ausentes): bool
     {
+        // Complemento só vale a pena quando já existe base tabulada e pouca coisa faltando
         $forcar_ia = getenv('EXTRATOR_FORCAR_IA');
-        if (filter_var($forcar_ia, FILTER_VALIDATE_BOOLEAN)) {
-            return false;
-        }
+        if (filter_var($forcar_ia, FILTER_VALIDATE_BOOLEAN)) return false;
 
-        if ($campos_ausentes === [] || empty($dados['produtos']) || !is_array($dados['produtos'])) {
-            return false;
-        }
+        if ($campos_ausentes === [] || empty($dados['produtos']) || !is_array($dados['produtos'])) return false;
 
         return count($campos_ausentes) <= 4;
     }
 
-    private function aplicarComplementoIa(array $dados, array $complemento, array $campos_ausentes): array
+    private function fAplicaComplementoIa(array $dados, array $complemento, array $campos_ausentes): array
     {
+        // Preenche somente campos ainda vazios para não sobrescrever regras mais confiáveis
         foreach ($campos_ausentes as $campo) {
             if (empty($dados[$campo]) && !empty($complemento[$campo])) {
                 $dados[$campo] = $complemento[$campo];
@@ -332,9 +335,9 @@ class processador_ia
         return $dados;
     }
 
-    private function extrairCamposAusentesComIa(string $texto_original, string $texto_filtrado, array $campos_ausentes, string $id_debug, bool $debug, float $inicio_processamento): array
+    private function fExtraiCamposAusentesIa(string $texto_original, string $texto_filtrado, array $campos_ausentes, string $id_debug, bool $debug, float $inicio_processamento): array
     {
-        $prompt = $this->construtor_prompt->montarPromptCamposAusentes($texto_original, $texto_filtrado, $campos_ausentes);
+        $prompt = $this->construtor_prompt->fMontaPromptCamposAusentes($texto_original, $texto_filtrado, $campos_ausentes);
 
         if ($debug) {
             registrarDebug('info', 'IA: chamada complementar iniciada', [
@@ -351,7 +354,7 @@ class processador_ia
             $prompt,
             $this->tempo_complemento_segundos,
             512,
-            min(4096, $this->cliente_ollama->calcularNumCtx($prompt)),
+            min(4096, $this->cliente_ollama->fCalculaNumCtx($prompt)),
             $id_debug,
             $debug,
             $inicio_processamento,
@@ -361,11 +364,12 @@ class processador_ia
 
         if ($json_bruto === null) return [];
 
-        $json_limpo = $this->limpador_json->limpar($json_bruto);
+        // Só aproveita chaves que estavam na lista de ausentes solicitada
+        $json_limpo = $this->limpador_json->fExtraiJsonDaRespostaIa($json_bruto);
         $resultado = json_decode($json_limpo, true);
         if (!is_array($resultado)) return [];
 
-        $resultado = $this->normalizador_resultado->fNormalizarChaves($resultado);
+        $resultado = $this->normalizador_resultado->fNormalizaChaves($resultado);
         $complemento = [];
 
         foreach ($campos_ausentes as $campo) {
