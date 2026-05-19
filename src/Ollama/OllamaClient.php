@@ -4,29 +4,19 @@ class OllamaClient
 {
     private $url_api;
     private $modelo;
-    private $tempo_conexao_segundos;
+    private $timeout_conexao;
     private $num_thread;
 
     public function __construct(
         string $url_api = 'http://localhost:11434/api/generate',
         string $modelo = 'qwen2.5:7b',
-        int $tempo_conexao_segundos = 10,
+        int $timeout_conexao = 10,
         int $num_thread = 6
     ) {
         $this->url_api = $url_api;
         $this->modelo = $modelo;
-        $this->tempo_conexao_segundos = $tempo_conexao_segundos;
+        $this->timeout_conexao = $timeout_conexao;
         $this->num_thread = $num_thread;
-    }
-
-    public function urlApi(): string
-    {
-        return $this->url_api;
-    }
-
-    public function modelo(): string
-    {
-        return $this->modelo;
     }
 
     public function fCalculaNumCtx(string $prompt): int
@@ -39,18 +29,16 @@ class OllamaClient
         return 12288;
     }
 
-    public function gerar(
+    public function fGeraRespostaIa(
         string $prompt,
-        int $tempo_requisicao_segundos,
+        int $timeout_requisicao,
         int $num_predict,
         int $num_ctx,
         string $id_debug,
         bool $debug,
-        float $inicio_processamento,
         string $rotulo = 'IA: chamada cURL',
         bool $falhar_silenciosamente = false
     ): ?string {
-        $inicio_payload = microtime(true);
         $payload = [
             'model' => $this->modelo,
             'prompt' => $prompt,
@@ -73,28 +61,22 @@ class OllamaClient
                 'payload_format' => $payload['format'],
                 'payload_options' => $payload['options'],
                 'payload_prompt_length' => strlen($payload['prompt']),
-                'connect_timeout_seconds' => $this->tempo_conexao_segundos,
-                'request_timeout_seconds' => $tempo_requisicao_segundos,
-                'step_duration_seconds' => $this->segundosDesde($inicio_payload),
-                'elapsed_seconds' => $this->segundosDesde($inicio_processamento),
             ]);
         }
 
-        $inicio_chamada = microtime(true);
         $curl = curl_init($this->url_api);
         curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($curl, CURLOPT_POST, true);
         curl_setopt($curl, CURLOPT_POSTFIELDS, json_encode($payload));
         curl_setopt($curl, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
-        curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, $this->tempo_conexao_segundos);
-        curl_setopt($curl, CURLOPT_TIMEOUT, $tempo_requisicao_segundos);
+        curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, $this->timeout_conexao);
+        curl_setopt($curl, CURLOPT_TIMEOUT, $timeout_requisicao);
         curl_setopt($curl, CURLOPT_NOSIGNAL, true);
 
         if ($debug) {
             registrarDebug('info', $rotulo . ': iniciada', [
                 'run_id' => $id_debug,
                 'api_url' => $this->url_api,
-                'elapsed_seconds' => $this->segundosDesde($inicio_processamento),
             ]);
         }
 
@@ -103,7 +85,6 @@ class OllamaClient
         $codigo_erro_curl = curl_errno($curl);
         $codigo_http = curl_getinfo($curl, CURLINFO_HTTP_CODE);
         $tipo_conteudo = curl_getinfo($curl, CURLINFO_CONTENT_TYPE);
-        $tempo_total = curl_getinfo($curl, CURLINFO_TOTAL_TIME);
         curl_close($curl);
 
         if ($debug) {
@@ -113,9 +94,6 @@ class OllamaClient
                 'curl_error' => $erro_curl,
                 'http_code' => $codigo_http,
                 'content_type' => $tipo_conteudo,
-                'curl_total_time_seconds' => $tempo_total,
-                'step_duration_seconds' => $this->segundosDesde($inicio_chamada),
-                'elapsed_seconds' => $this->segundosDesde($inicio_processamento),
                 'raw_response' => resumoDebug($resposta === false ? '' : $resposta, 2000),
             ]);
         }
@@ -125,7 +103,7 @@ class OllamaClient
 
             if ($codigo_erro_curl === CURLE_OPERATION_TIMEDOUT) {
                 throw new Exception(
-                    "Erro ao chamar Ollama: a geração excedeu {$tempo_requisicao_segundos}s sem resposta. " .
+                    "Erro ao chamar Ollama: a geração excedeu {$timeout_requisicao}s sem resposta. " .
                         "O modelo {$this->modelo} pode estar lento para este prompt; tente novamente, use um modelo menor ou aumente o timeout."
                 );
             }
@@ -138,7 +116,6 @@ class OllamaClient
             throw new Exception("Erro ao chamar Ollama: HTTP {$codigo_http} - " . substr($resposta, 0, 500));
         }
 
-        $inicio_decode = microtime(true);
         $dados_resposta = json_decode($resposta, true);
         $erro_json = json_last_error_msg();
 
@@ -147,8 +124,6 @@ class OllamaClient
                 'run_id' => $id_debug,
                 'json_error' => $erro_json,
                 'decoded_keys' => is_array($dados_resposta) ? array_keys($dados_resposta) : null,
-                'step_duration_seconds' => $this->segundosDesde($inicio_decode),
-                'elapsed_seconds' => $this->segundosDesde($inicio_processamento),
             ]);
         }
 
@@ -158,10 +133,5 @@ class OllamaClient
         }
 
         return $dados_resposta['response'] ?? '';
-    }
-
-    private function segundosDesde(float $inicio): float
-    {
-        return round(microtime(true) - $inicio, 4);
     }
 }

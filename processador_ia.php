@@ -31,8 +31,8 @@ function resumoDebug(?string $valor, int $limite = 8192): array
 
 class processador_ia
 {
-    private $tempo_requisicao_segundos = 600;
-    private $tempo_complemento_segundos = 120;
+    private $timeout_requisicao = 600;
+    private $timeout_complemento = 120;
 
     private $cliente_ollama;
     private $construtor_prompt;
@@ -80,19 +80,15 @@ class processador_ia
     public function fProcessaTextoNf3e(string $texto, ?string $id_debug = null, bool $debug = true)
     {
         $id_debug = $id_debug ?: uniqid('ia_', true);
-        $inicio_processamento = microtime(true);
 
         if ($debug) {
             registrarDebug('info', 'IA: inicio do processamento', [
                 'run_id' => $id_debug,
-                'api_url' => $this->cliente_ollama->urlApi(),
-                'model' => $this->cliente_ollama->modelo(),
                 'prompt_path' => $this->construtor_prompt->fCaminhoPrompt(),
                 'input_text' => resumoDebug($texto, 2000),
             ]);
         }
 
-        $inicio_filtro = microtime(true);
         // Reduz o texto bruto aos trechos que ajudam a extração e o prompt
         $texto_filtrado = $this->filtro_texto->fFiltraTextoNf3e($texto);
 
@@ -103,12 +99,9 @@ class processador_ia
                 'filtered_text' => resumoDebug($texto_filtrado, 4000),
                 'original_length' => strlen($texto),
                 'filtered_length' => strlen($texto_filtrado),
-                'step_duration_seconds' => $this->segundosDesde($inicio_filtro),
-                'elapsed_seconds' => $this->segundosDesde($inicio_processamento),
             ]);
         }
 
-        $inicio_deterministico = microtime(true);
         // Primeiro tenta extrair tudo por regras: campos fixos, produtos e histórico
         $campos_fixos = $this->extrator_deterministico->fExtraiCamposNf3e($texto);
         $campos_tabulados = $this->extrator_tabulado->fExtraiDadosTabela($texto_filtrado);
@@ -121,8 +114,6 @@ class processador_ia
                 'tabulated_fields' => array_keys($campos_tabulados),
                 'product_count' => isset($campos_tabulados['produtos']) ? count($campos_tabulados['produtos']) : 0,
                 'history_count' => isset($campos_tabulados['historico']) ? count($campos_tabulados['historico']) : 0,
-                'step_duration_seconds' => $this->segundosDesde($inicio_deterministico),
-                'elapsed_seconds' => $this->segundosDesde($inicio_processamento),
             ]);
         }
 
@@ -134,7 +125,6 @@ class processador_ia
                 registrarDebug('info', 'IA: resposta gerada pelo caminho rápido determinístico', [
                     'run_id' => $id_debug,
                     'result_keys' => array_keys($resultado_deterministico),
-                    'duration_seconds' => $this->segundosDesde($inicio_processamento),
                 ]);
             }
 
@@ -146,14 +136,12 @@ class processador_ia
         $campos_ausentes = $this->fListaCamposEssenciaisAusentes($dados_deterministicos);
 
         if ($this->fValidaComplementoIa($dados_deterministicos, $campos_ausentes)) {
-            $inicio_complemento = microtime(true);
             $campos_complementares = $this->fExtraiCamposAusentesIa(
                 $texto,
                 $texto_filtrado,
                 $campos_ausentes,
                 $id_debug,
-                $debug,
-                $inicio_processamento
+                $debug
             );
 
             $dados_deterministicos = $this->fAplicaComplementoIa($dados_deterministicos, $campos_complementares, $campos_ausentes);
@@ -164,8 +152,6 @@ class processador_ia
                     'requested_fields' => $campos_ausentes,
                     'filled_fields' => array_keys($campos_complementares),
                     'still_missing_fields' => $this->fListaCamposEssenciaisAusentes($dados_deterministicos),
-                    'step_duration_seconds' => $this->segundosDesde($inicio_complemento),
-                    'elapsed_seconds' => $this->segundosDesde($inicio_processamento),
                 ]);
             }
 
@@ -177,7 +163,6 @@ class processador_ia
                     registrarDebug('info', 'IA: resposta gerada com complemento mínimo', [
                         'run_id' => $id_debug,
                         'result_keys' => array_keys($resultado_complementado),
-                        'duration_seconds' => $this->segundosDesde($inicio_processamento),
                     ]);
                 }
 
@@ -185,7 +170,6 @@ class processador_ia
             }
         }
 
-        $inicio_template = microtime(true);
 
         // Fallback: monta o prompt completo quando o caminho determinístico não basta
         if (!file_exists($this->construtor_prompt->fCaminhoPrompt())) {
@@ -193,8 +177,6 @@ class processador_ia
                 registrarDebug('error', 'IA: template de prompt nao encontrado', [
                     'run_id' => $id_debug,
                     'prompt_path' => $this->construtor_prompt->fCaminhoPrompt(),
-                    'step_duration_seconds' => $this->segundosDesde($inicio_template),
-                    'elapsed_seconds' => $this->segundosDesde($inicio_processamento),
                 ]);
             }
 
@@ -208,12 +190,9 @@ class processador_ia
                 'run_id' => $id_debug,
                 'template' => resumoDebug($template, 2000),
                 'template_has_placeholder' => strpos($template, '{{TEXTO_PDF}}') !== false,
-                'step_duration_seconds' => $this->segundosDesde($inicio_template),
-                'elapsed_seconds' => $this->segundosDesde($inicio_processamento),
             ]);
         }
 
-        $inicio_prompt = microtime(true);
         // O template define as regras; o texto filtrado entra no placeholder
         $prompt_completo = str_replace('{{TEXTO_PDF}}', $texto_filtrado, $template);
 
@@ -223,19 +202,16 @@ class processador_ia
                 'full_prompt' => resumoDebug($prompt_completo, 2000),
                 'text_length' => strlen($texto),
                 'filtered_text_length' => strlen($texto_filtrado),
-                'step_duration_seconds' => $this->segundosDesde($inicio_prompt),
-                'elapsed_seconds' => $this->segundosDesde($inicio_processamento),
             ]);
         }
 
-        $json_bruto = $this->cliente_ollama->gerar(
+        $json_bruto = $this->cliente_ollama->fGeraRespostaIa(
             $prompt_completo,
-            $this->tempo_requisicao_segundos,
+            $this->timeout_requisicao,
             4096,
             $this->cliente_ollama->fCalculaNumCtx($prompt_completo),
             $id_debug,
-            $debug,
-            $inicio_processamento
+            $debug
         );
 
         if ($debug) {
@@ -245,7 +221,6 @@ class processador_ia
             ]);
         }
 
-        $inicio_decode_resultado = microtime(true);
         // A resposta pode vir com markdown ou texto extra; o sanitizer isola o JSON
         $json_limpo = $this->limpador_json->fExtraiJsonDaRespostaIa($json_bruto ?? '');
         $resultado_decodificado = json_decode($json_limpo, true);
@@ -258,8 +233,6 @@ class processador_ia
                 'clean_json' => resumoDebug($json_limpo, 2000),
                 'result_type' => gettype($resultado_decodificado),
                 'result_keys' => is_array($resultado_decodificado) ? array_keys($resultado_decodificado) : null,
-                'step_duration_seconds' => $this->segundosDesde($inicio_decode_resultado),
-                'duration_seconds' => round(microtime(true) - $inicio_processamento, 4),
             ]);
         }
 
@@ -267,7 +240,6 @@ class processador_ia
             throw new Exception("IA retornou um JSON inválido ou fora do formato esperado.");
         }
 
-        $inicio_campos_deterministicos = microtime(true);
         // Dados determinísticos têm prioridade sobre o retorno da IA
         $resultado_decodificado = $this->normalizador_resultado->fNormalizaChaves($resultado_decodificado);
         $resultado_decodificado = array_merge($resultado_decodificado, $campos_tabulados, $campos_fixos, $campos_complementares);
@@ -279,17 +251,10 @@ class processador_ia
                 'fixed_fields' => $campos_fixos,
                 'tabulated_fields' => array_keys($campos_tabulados),
                 'result_keys' => array_keys($resultado_decodificado),
-                'step_duration_seconds' => $this->segundosDesde($inicio_campos_deterministicos),
-                'duration_seconds' => $this->segundosDesde($inicio_processamento),
             ]);
         }
 
         return $resultado_decodificado;
-    }
-
-    private function segundosDesde(float $inicio): float
-    {
-        return round(microtime(true) - $inicio, 4);
     }
 
     private function fValidaRespostaDeterministica(array $dados): bool
@@ -335,7 +300,7 @@ class processador_ia
         return $dados;
     }
 
-    private function fExtraiCamposAusentesIa(string $texto_original, string $texto_filtrado, array $campos_ausentes, string $id_debug, bool $debug, float $inicio_processamento): array
+    private function fExtraiCamposAusentesIa(string $texto_original, string $texto_filtrado, array $campos_ausentes, string $id_debug, bool $debug): array
     {
         $prompt = $this->construtor_prompt->fMontaPromptCamposAusentes($texto_original, $texto_filtrado, $campos_ausentes);
 
@@ -345,19 +310,16 @@ class processador_ia
                 'requested_fields' => $campos_ausentes,
                 'prompt' => resumoDebug($prompt, 2000),
                 'payload_prompt_length' => strlen($prompt),
-                'request_timeout_seconds' => $this->tempo_complemento_segundos,
-                'elapsed_seconds' => $this->segundosDesde($inicio_processamento),
             ]);
         }
 
-        $json_bruto = $this->cliente_ollama->gerar(
+        $json_bruto = $this->cliente_ollama->fGeraRespostaIa(
             $prompt,
-            $this->tempo_complemento_segundos,
+            $this->timeout_complemento,
             512,
             min(4096, $this->cliente_ollama->fCalculaNumCtx($prompt)),
             $id_debug,
             $debug,
-            $inicio_processamento,
             'IA: chamada complementar',
             true
         );

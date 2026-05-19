@@ -28,7 +28,6 @@ if ($debug_config === false || $debug_config === null) {
 }
 $debug = filter_var($debug_config, FILTER_VALIDATE_BOOLEAN);
 $id_debug = uniqid('req_', true);
-$inicio_requisicao = microtime(true);
 
 if ($debug) {
     registrarDebug('info', 'Requisicao recebida em processar.php', [
@@ -114,7 +113,6 @@ try {
     }
 
     // 2. Extração de Texto do PDF
-    $inicio_extracao_pdf = microtime(true);
     $texto = (new Pdf())
         ->setPdf($arquivo['tmp_name'])
         ->setOptions(['layout'])
@@ -124,8 +122,6 @@ try {
         registrarDebug('debug', 'Texto extraido do PDF', [
             'run_id' => $id_debug,
             'text_summary' => resumoDebug($texto, 2000),
-            'step_duration_seconds' => round(microtime(true) - $inicio_extracao_pdf, 4),
-            'elapsed_seconds' => round(microtime(true) - $inicio_requisicao, 4),
         ]);
     }
 
@@ -156,7 +152,6 @@ try {
             'run_id' => $id_debug,
             'result_type' => gettype($dados_gerais),
             'result_keys' => is_array($dados_gerais) ? array_keys($dados_gerais) : null,
-            'duration_seconds' => round(microtime(true) - $inicio_requisicao, 4),
         ]);
     }
 
@@ -176,7 +171,6 @@ try {
             'file' => $erro->getFile(),
             'line' => $erro->getLine(),
             'trace' => $erro->getTraceAsString(),
-            'duration_seconds' => round(microtime(true) - $inicio_requisicao, 4),
         ]);
     }
 
