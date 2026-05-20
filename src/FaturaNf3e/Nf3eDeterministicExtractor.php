@@ -306,11 +306,54 @@ class Nf3eDeterministicExtractor
             '/THS_(' . $modalidades . ')\b/iu',
         ]);
 
+        if ($modalidade === null) {
+            $modalidade = $this->fExtraiModalidadeAzulVerde($texto);
+        }
+
         if ($modalidade !== null) {
             $campos['codigo_modalidade'] = strtoupper($modalidade);
         }
 
         return $campos;
+    }
+
+    /**
+     * Busca modalidade azul/verde mesmo quando o layout omite o rótulo clássico
+     *
+     * Linhas de bandeira tarifária são ignoradas no fallback amplo para evitar
+     * confundir bandeira verde com modalidade verde.
+     */
+    private function fExtraiModalidadeAzulVerde(string $texto): ?string
+    {
+        $linhas_relevantes = [];
+        foreach (explode("\n", $texto) as $linha) {
+            if (preg_match('/BANDEIRA(?:\(S\))?\s+TARIF[ÁA]RIA|BANDEIRA\s+(?:VERDE|AMARELA|VERMELHA)/iu', $linha)) continue;
+            $linhas_relevantes[] = $linha;
+        }
+
+        $texto_relevante = implode("\n", $linhas_relevantes);
+        $padroes_prioritarios = [
+            '/\bTHS[_\s-]*(AZUL|VERDE)\b/iu',
+            '/MODALIDADE\s*(?:TARIF[ÁA]RIA)?[^\n]*(AZUL|VERDE)\b/iu',
+            '/(?:^|\n)[^\n]*(?:CLASSIFICA[ÇC][ÃA]O|SUBGRUPO|TARIFA|TARIF[ÁA]RIA)[^\n]*\b(AZUL|VERDE)\b/iu',
+        ];
+
+        foreach ($padroes_prioritarios as $padrao) {
+            if (preg_match($padrao, $texto_relevante, $resultado)) {
+                return strtoupper($resultado[1]);
+            }
+        }
+
+        $modalidades_encontradas = [];
+        foreach ($linhas_relevantes as $linha) {
+            if (preg_match_all('/\b(AZUL|VERDE)\b/iu', $linha, $resultados)) {
+                foreach ($resultados[1] as $modalidade) {
+                    $modalidades_encontradas[strtoupper($modalidade)] = true;
+                }
+            }
+        }
+
+        return count($modalidades_encontradas) === 1 ? array_key_first($modalidades_encontradas) : null;
     }
 
     /**
