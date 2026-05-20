@@ -81,39 +81,20 @@ class processador_ia
     {
         $id_debug = $id_debug ?: uniqid('ia_', true);
 
-        if ($debug) {
-            registrarDebug('info', 'IA: inicio do processamento', [
-                'run_id' => $id_debug,
-                'prompt_path' => $this->construtor_prompt->fCaminhoPrompt(),
-                'input_text' => resumoDebug($texto, 2000),
-            ]);
-        }
-
         // Reduz o texto bruto aos trechos que ajudam a extração e o prompt
         $texto_filtrado = $this->filtro_texto->fFiltraTextoNf3e($texto);
-
-        if ($debug) {
-            registrarDebug('debug', 'IA: texto filtrado para prompt', [
-                'run_id' => $id_debug,
-                'original_text' => resumoDebug($texto, 2000),
-                'filtered_text' => resumoDebug($texto_filtrado, 4000),
-                'original_length' => strlen($texto),
-                'filtered_length' => strlen($texto_filtrado),
-            ]);
-        }
 
         // Primeiro tenta extrair tudo por regras: campos fixos, produtos e histórico
         $campos_fixos = $this->extrator_deterministico->fExtraiCamposNf3e($texto);
         $campos_tabulados = $this->extrator_tabulado->fExtraiDadosTabela($texto_filtrado);
         $dados_deterministicos = array_merge($campos_tabulados, $campos_fixos);
+        $campos_ausentes = $this->fListaCamposEssenciaisAusentes($dados_deterministicos);
 
         if ($debug) {
-            registrarDebug('info', 'IA: dados determinísticos avaliados', [
-                'run_id' => $id_debug,
-                'fixed_fields' => array_keys($campos_fixos),
-                'tabulated_fields' => array_keys($campos_tabulados),
-                'product_count' => isset($campos_tabulados['produtos']) ? count($campos_tabulados['produtos']) : 0,
-                'history_count' => isset($campos_tabulados['historico']) ? count($campos_tabulados['historico']) : 0,
+            registrarDebug('informacao', 'Campos deterministicos extraidos', [
+                'id_debug' => $id_debug,
+                'campos' => $this->fResumeCamposDeterministicos($dados_deterministicos),
+                'campos_essenciais_ausentes' => $campos_ausentes,
             ]);
         }
 
@@ -122,9 +103,10 @@ class processador_ia
             $resultado_deterministico = $this->normalizador_resultado->fNormalizaResultadoFinal($dados_deterministicos);
 
             if ($debug) {
-                registrarDebug('info', 'IA: resposta gerada pelo caminho rápido determinístico', [
-                    'run_id' => $id_debug,
-                    'result_keys' => array_keys($resultado_deterministico),
+                registrarDebug('informacao', 'Caminho de extracao definido', [
+                    'id_debug' => $id_debug,
+                    'modo' => 'deterministico',
+                    'ia_chamada' => false,
                 ]);
             }
 
@@ -133,8 +115,6 @@ class processador_ia
 
         $campos_complementares = [];
         // Quando faltam poucos campos, usa uma chamada curta para complementar apenas eles
-        $campos_ausentes = $this->fListaCamposEssenciaisAusentes($dados_deterministicos);
-
         if ($this->fValidaComplementoIa($dados_deterministicos, $campos_ausentes)) {
             $campos_complementares = $this->fExtraiCamposAusentesIa(
                 $texto,
@@ -147,11 +127,11 @@ class processador_ia
             $dados_deterministicos = $this->fAplicaComplementoIa($dados_deterministicos, $campos_complementares, $campos_ausentes);
 
             if ($debug) {
-                registrarDebug('info', 'IA: complemento de campos ausentes finalizado', [
-                    'run_id' => $id_debug,
-                    'requested_fields' => $campos_ausentes,
-                    'filled_fields' => array_keys($campos_complementares),
-                    'still_missing_fields' => $this->fListaCamposEssenciaisAusentes($dados_deterministicos),
+                registrarDebug('informacao', 'Complemento por IA finalizado', [
+                    'id_debug' => $id_debug,
+                    'campos_solicitados' => $campos_ausentes,
+                    'campos_preenchidos' => array_keys($campos_complementares),
+                    'campos_essenciais_ausentes' => $this->fListaCamposEssenciaisAusentes($dados_deterministicos),
                 ]);
             }
 
@@ -160,9 +140,10 @@ class processador_ia
                 $resultado_complementado = $this->normalizador_resultado->fNormalizaResultadoFinal($dados_deterministicos);
 
                 if ($debug) {
-                    registrarDebug('info', 'IA: resposta gerada com complemento mínimo', [
-                        'run_id' => $id_debug,
-                        'result_keys' => array_keys($resultado_complementado),
+                    registrarDebug('informacao', 'Caminho de extracao definido', [
+                        'id_debug' => $id_debug,
+                        'modo' => 'deterministico_com_complemento_ia',
+                        'ia_chamada' => true,
                     ]);
                 }
 
@@ -174,9 +155,9 @@ class processador_ia
         // Fallback: monta o prompt completo quando o caminho determinístico não basta
         if (!file_exists($this->construtor_prompt->fCaminhoPrompt())) {
             if ($debug) {
-                registrarDebug('error', 'IA: template de prompt nao encontrado', [
-                    'run_id' => $id_debug,
-                    'prompt_path' => $this->construtor_prompt->fCaminhoPrompt(),
+                registrarDebug('erro', 'IA: template de prompt nao encontrado', [
+                    'id_debug' => $id_debug,
+                    'caminho_prompt' => $this->construtor_prompt->fCaminhoPrompt(),
                 ]);
             }
 
@@ -185,23 +166,15 @@ class processador_ia
 
         $template = $this->construtor_prompt->fCarregaTemplate();
 
-        if ($debug) {
-            registrarDebug('debug', 'IA: template carregado', [
-                'run_id' => $id_debug,
-                'template' => resumoDebug($template, 2000),
-                'template_has_placeholder' => strpos($template, '{{TEXTO_PDF}}') !== false,
-            ]);
-        }
-
         // O template define as regras; o texto filtrado entra no placeholder
         $prompt_completo = str_replace('{{TEXTO_PDF}}', $texto_filtrado, $template);
 
         if ($debug) {
-            registrarDebug('debug', 'IA: prompt final montado', [
-                'run_id' => $id_debug,
-                'full_prompt' => resumoDebug($prompt_completo, 2000),
-                'text_length' => strlen($texto),
-                'filtered_text_length' => strlen($texto_filtrado),
+            registrarDebug('informacao', 'Caminho de extracao definido', [
+                'id_debug' => $id_debug,
+                'modo' => 'ia_completa',
+                'ia_chamada' => true,
+                'campos_essenciais_ausentes' => $campos_ausentes,
             ]);
         }
 
@@ -214,25 +187,15 @@ class processador_ia
             $debug
         );
 
-        if ($debug) {
-            registrarDebug('debug', 'IA: campo response extraido', [
-                'run_id' => $id_debug,
-                'response_field' => resumoDebug($json_bruto, 2000),
-            ]);
-        }
-
         // A resposta pode vir com markdown ou texto extra; o sanitizer isola o JSON
         $json_limpo = $this->limpador_json->fExtraiJsonDaRespostaIa($json_bruto ?? '');
         $resultado_decodificado = json_decode($json_limpo, true);
         $erro_json_interno = json_last_error_msg();
 
-        if ($debug) {
-            registrarDebug(json_last_error() === JSON_ERROR_NONE ? 'info' : 'error', 'IA: JSON final decodificado', [
-                'run_id' => $id_debug,
-                'json_error' => $erro_json_interno,
-                'clean_json' => resumoDebug($json_limpo, 2000),
-                'result_type' => gettype($resultado_decodificado),
-                'result_keys' => is_array($resultado_decodificado) ? array_keys($resultado_decodificado) : null,
+        if ($debug && json_last_error() !== JSON_ERROR_NONE) {
+            registrarDebug('erro', 'IA retornou JSON invalido', [
+                'id_debug' => $id_debug,
+                'erro_json' => $erro_json_interno,
             ]);
         }
 
@@ -245,16 +208,26 @@ class processador_ia
         $resultado_decodificado = array_merge($resultado_decodificado, $campos_tabulados, $campos_fixos, $campos_complementares);
         $resultado_decodificado = $this->normalizador_resultado->fNormalizaResultadoFinal($resultado_decodificado);
 
-        if ($debug) {
-            registrarDebug('info', 'IA: campos determinísticos aplicados', [
-                'run_id' => $id_debug,
-                'fixed_fields' => $campos_fixos,
-                'tabulated_fields' => array_keys($campos_tabulados),
-                'result_keys' => array_keys($resultado_decodificado),
-            ]);
+        return $resultado_decodificado;
+    }
+
+    private function fResumeCamposDeterministicos(array $dados): array
+    {
+        $resumo = [];
+
+        foreach ($dados as $campo => $valor) {
+            if (is_array($valor)) {
+                $resumo[$campo] = ['quantidade' => count($valor)];
+                continue;
+            }
+
+            if ($valor !== null && $valor !== '') {
+                $resumo[$campo] = $valor;
+            }
         }
 
-        return $resultado_decodificado;
+        ksort($resumo);
+        return $resumo;
     }
 
     private function fValidaRespostaDeterministica(array $dados): bool
@@ -305,11 +278,9 @@ class processador_ia
         $prompt = $this->construtor_prompt->fMontaPromptCamposAusentes($texto_original, $texto_filtrado, $campos_ausentes);
 
         if ($debug) {
-            registrarDebug('info', 'IA: chamada complementar iniciada', [
-                'run_id' => $id_debug,
-                'requested_fields' => $campos_ausentes,
-                'prompt' => resumoDebug($prompt, 2000),
-                'payload_prompt_length' => strlen($prompt),
+            registrarDebug('informacao', 'Complemento por IA iniciado', [
+                'id_debug' => $id_debug,
+                'campos_solicitados' => $campos_ausentes,
             ]);
         }
 
