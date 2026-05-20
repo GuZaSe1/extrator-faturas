@@ -53,17 +53,6 @@ class OllamaClient
             ],
         ];
 
-        if ($debug) {
-            registrarDebug('debug', $rotulo . ': payload montado', [
-                'run_id' => $id_debug,
-                'payload_model' => $payload['model'],
-                'payload_stream' => $payload['stream'],
-                'payload_format' => $payload['format'],
-                'payload_options' => $payload['options'],
-                'payload_prompt_length' => strlen($payload['prompt']),
-            ]);
-        }
-
         $curl = curl_init($this->url_api);
         curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($curl, CURLOPT_POST, true);
@@ -73,30 +62,11 @@ class OllamaClient
         curl_setopt($curl, CURLOPT_TIMEOUT, $timeout_requisicao);
         curl_setopt($curl, CURLOPT_NOSIGNAL, true);
 
-        if ($debug) {
-            registrarDebug('info', $rotulo . ': iniciada', [
-                'run_id' => $id_debug,
-                'api_url' => $this->url_api,
-            ]);
-        }
-
         $resposta = curl_exec($curl);
         $erro_curl = curl_error($curl);
         $codigo_erro_curl = curl_errno($curl);
         $codigo_http = curl_getinfo($curl, CURLINFO_HTTP_CODE);
-        $tipo_conteudo = curl_getinfo($curl, CURLINFO_CONTENT_TYPE);
         curl_close($curl);
-
-        if ($debug) {
-            registrarDebug($codigo_erro_curl ? 'error' : 'info', $rotulo . ': finalizada', [
-                'run_id' => $id_debug,
-                'curl_errno' => $codigo_erro_curl,
-                'curl_error' => $erro_curl,
-                'http_code' => $codigo_http,
-                'content_type' => $tipo_conteudo,
-                'raw_response' => resumoDebug($resposta === false ? '' : $resposta, 2000),
-            ]);
-        }
 
         if ($resposta === false) {
             if ($falhar_silenciosamente) return null;
@@ -117,15 +87,6 @@ class OllamaClient
         }
 
         $dados_resposta = json_decode($resposta, true);
-        $erro_json = json_last_error_msg();
-
-        if ($debug) {
-            registrarDebug(json_last_error() === JSON_ERROR_NONE ? 'debug' : 'error', $rotulo . ': resposta HTTP decodificada', [
-                'run_id' => $id_debug,
-                'json_error' => $erro_json,
-                'decoded_keys' => is_array($dados_resposta) ? array_keys($dados_resposta) : null,
-            ]);
-        }
 
         if (!is_array($dados_resposta)) {
             if ($falhar_silenciosamente) return null;

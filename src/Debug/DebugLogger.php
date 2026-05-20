@@ -41,9 +41,9 @@ class DebugLogger
         $tamanho = strlen($valor);
 
         return [
-            'length' => $tamanho,
-            'excerpt' => substr($valor, 0, $limite),
-            'truncated' => $tamanho > $limite,
+            'tamanho' => $tamanho,
+            'trecho' => substr($valor, 0, $limite),
+            'truncado' => $tamanho > $limite,
         ];
     }
 }
