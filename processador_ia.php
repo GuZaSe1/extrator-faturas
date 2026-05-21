@@ -48,6 +48,7 @@ class processador_ia
         'num_cnpj_emit',
         'num_nf',
         'referencia',
+        'cod_unidade_consumo',
         'dat_emissao',
         'dat_vencimento',
         'val_total',
@@ -97,6 +98,9 @@ class processador_ia
                 'campos_essenciais_ausentes' => $campos_ausentes,
             ]);
         }
+
+        // TESTE: somente campos deterministicos, sem chamar IA
+        // return $this->normalizador_resultado->fNormalizaResultadoFinal($dados_deterministicos);
 
         // Caminho rápido: se as regras já encontraram o essencial, não chama o modelo
         if ($this->fValidaRespostaDeterministica($dados_deterministicos)) {
