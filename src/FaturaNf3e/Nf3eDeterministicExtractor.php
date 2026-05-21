@@ -10,6 +10,42 @@ require_once __DIR__ . '/Nf3eInvoiceText.php';
  */
 class Nf3eDeterministicExtractor
 {
+    // codigo da distribuidora presente em cada uc por distribuidora
+    public const CODIGO_DISTRIBUIDORA = [
+        '30460297000139' => '103', // Castrolanda
+        '06981180000116' => '018', // Cemig
+        '52777034000190' => '106', // Cemirim
+        '49606312000132' => '086', // Ceripa
+        '97081434000103' => '093', // Cermissões
+        '09257558000121' => '095', // Certel
+        '75805895000130' => '027', // Cocel
+        '89435598000155' => '101', // Creral
+
+        '28152650000171' => '054', // EDP_ES
+        '02302100000106' => '004', // EDP_SP
+
+        '04065033000170' => '046', // Energisa_AC
+        '19527639007837' => '050', // Energisa_Minas_Rio
+        '15413826000150' => '051', // Energisa_MS
+        '03467321000199' => '017', // Energisa_MT
+        '09095183000140' => '053', // Energisa_PB
+        '05914650000166' => '020', // Energisa_RO
+        '13017462000163' => '055', // Energisa_SE
+        '07282377000120' => '006', // Energisa_Sul_Sudeste_SP
+        '25086034000171' => '015', // Energisa_TO
+
+        '12272084000100' => '008', // Equatorial_Alagoas
+        '01543032000104' => '012', // Equatorial_Goias
+        '06272793000184' => '016', // Equatorial_Maranhão
+        '04895728000180' => '013', // Equatorial_Pará
+        '06840748000189' => '019', // Equatorial_Piauí
+
+        '91982348000187' => '057', // Hidropan
+        '60444437000146' => '059', // Light
+
+        '13255658000196' => '062', // Sulgipe
+    ];
+
     /**
      * Orquestra as extrações gerais e os refinamentos por layout
      *
@@ -64,13 +100,7 @@ class Nf3eDeterministicExtractor
             $campos['num_cnpj_dest'] = $cnpj_destinatario;
         }
 
-        $unidade_consumo = $this->fBuscaPrimeiro($texto_normalizado, [
-            '/N[ÚU]MERO\s+UC[^\n]*(?:\n[^\n]*){0,4}\n\s*(\d{4,20})\s*\/\s*\d{4,20}/iu',
-            '/N[ÚU]MERO\s+UC\s+(\d{4,20})(?:\s*\/\s*\d{4,20})?/iu',
-            '/\bUC\s*[:\-]?\s*(\d{4,20})(?:\s*\/\s*\d{4,20})?/iu',
-            '/UNIDADE\s+CONSUMIDORA\s*[:\-]?\s*(\d{4,20})/iu',
-            '/(?:^|\n)\s*(\d{4,20})\s*\/\s*\d{4,20}\s+R\$\s*[*.0-9]*,\d{2}/u',
-        ]);
+        $unidade_consumo = $this->fExtraiUnidadeConsumoPadronizada($texto_normalizado, $campos['num_cnpj_emit'] ?? null);
 
         if ($unidade_consumo !== null) {
             $campos['cod_unidade_consumo'] = $unidade_consumo;
@@ -148,6 +178,98 @@ class Nf3eDeterministicExtractor
         }
 
         return $campos;
+    }
+
+    // Extrai a UC padronizada pela REN 1.095/2024 usando distribuidora e DVs
+    private function fExtraiUnidadeConsumoPadronizada(string $texto, ?string $cnpj_emitente): ?string
+    {
+        if ($cnpj_emitente === null) return null;
+
+        $cnpj_emitente = Nf3eInvoiceText::fSomenteDigitos($cnpj_emitente);
+        $codigo_distribuidora = self::CODIGO_DISTRIBUIDORA[$cnpj_emitente] ?? null;
+        if ($codigo_distribuidora === null) return null;
+
+        $janelas_prioritarias = [];
+        if (preg_match_all('/(?:N[ÚU]MERO\s+UC|\bUC\b|UNIDADE\s+CONSUMIDORA)[^\n]*(?:\n[^\n]*){0,3}/iu', $texto, $resultados)) {
+            $janelas_prioritarias = $resultados[0];
+        }
+
+        foreach (array_merge($janelas_prioritarias, [$texto]) as $janela) {
+            foreach ($this->fCandidatasUnidadeConsumo($janela) as $candidata) {
+                if ($this->fUnidadeConsumoValida($candidata, $codigo_distribuidora)) {
+                    return $candidata;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    // Gera candidatas de UC aceitando apenas dígitos, pontos e traços
+    private function fCandidatasUnidadeConsumo(string $texto): array
+    {
+        if (!preg_match_all('/(?<![\d.\/-])([0-9][0-9.-]{3,}[0-9])(?![\d.\/-])/u', $texto, $resultados, PREG_OFFSET_CAPTURE)) {
+            return [];
+        }
+
+        $candidatas = [];
+
+        foreach ($resultados[1] as $resultado) {
+            [$candidata, $inicio] = $resultado;
+            if ($this->fCandidataUnidadeConsumoVizinhaDeBarra($texto, $inicio, strlen($candidata))) continue;
+
+            $digitos = Nf3eInvoiceText::fSomenteDigitos($candidata);
+            $tamanho = strlen($digitos);
+            if ($tamanho < 5 || $tamanho > 15) continue;
+
+            $candidatas[$digitos] = true;
+        }
+
+        return array_keys($candidatas);
+    }
+
+    // Evita aceitar metade de pares como "UC / instalação", que usam divisor fora da regra
+    private function fCandidataUnidadeConsumoVizinhaDeBarra(string $texto, int $inicio, int $tamanho): bool
+    {
+        $antes = substr($texto, 0, $inicio);
+        $depois = substr($texto, $inicio + $tamanho);
+
+        return (bool) preg_match('/\/\s*$/u', $antes) || (bool) preg_match('/^\s*\//u', $depois);
+    }
+
+    // Valida código da distribuidora e os dois dígitos verificadores da UC
+    private function fUnidadeConsumoValida(string $digitos, string $codigo_distribuidora): bool
+    {
+        if (!preg_match('/^\d{5,15}$/', $digitos)) return false;
+
+        $unidade_padronizada = str_pad($digitos, 15, '0', STR_PAD_LEFT);
+        if (substr($unidade_padronizada, 10, 3) !== $codigo_distribuidora) return false;
+
+        return substr($unidade_padronizada, 13, 2) === $this->fCalculaDigitosUnidadeConsumo($unidade_padronizada);
+    }
+
+    // Calcula N2N1 conforme o Anexo II do manual da REN 1.095/2024
+    private function fCalculaDigitosUnidadeConsumo(string $unidade_padronizada): string
+    {
+        $n2 = $this->fCalculaDigitoVerificadorUnidadeConsumo(substr($unidade_padronizada, 0, 13));
+        $n1 = $this->fCalculaDigitoVerificadorUnidadeConsumo(substr($unidade_padronizada, 1, 12) . $n2);
+
+        return (string) $n2 . (string) $n1;
+    }
+
+    // Calcula um dígito por módulo 11 com os pesos definidos para a UC
+    private function fCalculaDigitoVerificadorUnidadeConsumo(string $base): int
+    {
+        $pesos = [10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 10, 9, 8];
+        $soma = 0;
+
+        foreach ($pesos as $indice => $peso) {
+            $soma += (int) $base[$indice] * $peso;
+        }
+
+        $resto = $soma % 11;
+
+        return $resto < 2 ? 0 : 11 - $resto;
     }
 
     /**
