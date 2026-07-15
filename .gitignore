@@ -1,6 +1,7 @@
-/.env
+.env
 /benchmarks/private/
 /benchmarks/results/
 /logs/*.log
 *.tmp
 *.cache
+venv/
