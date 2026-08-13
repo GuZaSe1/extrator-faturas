@@ -1,6 +1,5 @@
 {
     "require": {
-        "smalot/pdfparser": "^2.12",
         "spatie/pdf-to-text": "^1.54"
     }
 }

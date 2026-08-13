@@ -8,7 +8,7 @@ A grande vantagem desta arquitetura é a utilização de Inteligência Artificia
 
 PRINCIPAIS FUNCIONALIDADES
 
-- Leitura de PDFs: Extração de texto bruto utilizando a biblioteca Smalot/PdfParser
+- Leitura de PDFs: Extração de texto bruto utilizando `spatie/pdf-to-text`
 - Processamento com IA Local: Integração com a API do Ollama, suportando modelos como o Qwen 2.5 (7B ou 14B)
 - Saídas Estruturadas (JSON): O sistema "obriga" a IA a devolver os dados num formato JSON estrito e tipado, evitando alucinações e facilitando 
   a integração com a base de dados
@@ -26,13 +26,14 @@ COMO INSTALAR E EXECUTAR
 
 O arquivo `python/agentes_nf3e.py` executa um fluxo separado da interface PHP:
 
-1. Lê diretamente o arquivo `texto_aws.txt` com o texto gerado pela AWS.
-2. Lê o texto diretamente; arquivos JSON com `texto_por_pagina` também são aceitos.
+1. No modo banco, busca `cod_job_extracao` no MySQL por empresa e extração.
+2. Recupera todas as páginas desse Job ID no AWS Textract e ordena as linhas.
 3. O agente extrator transforma o texto em um objeto `DadosFatura`.
 4. O agente validador recebe o texto original e o JSON extraído, e apenas aprova ou rejeita o resultado.
 5. O script imprime um envelope JSON com metadados, dados extraídos e validação.
 
-Esse fluxo não consulta o MySQL e não chama novamente o Textract. Ele usa somente o texto que já está no arquivo da AWS.
+O modo arquivo anterior continua disponível para testes locais. Ele aceita texto simples
+ou JSON com `texto_por_pagina`, sem consultar MySQL ou Textract.
 
 ### COMO OS AGENTES SÃO CRIADOS
 
@@ -55,7 +56,7 @@ Na raiz do projeto, instale as dependências no ambiente virtual:
 venv/bin/python -m pip install -r python/requirements-agentes.txt
 ```
 
-O arquivo `python/.env` precisa conter somente a configuração do Ollama. Use `python/.env.example` como referência e inclua:
+Use `python/.env.example` como referência. Para o modo banco, configure MySQL, região/credenciais AWS e Ollama. Os modelos podem ser definidos com:
 
 ```dotenv
 OLLAMA_EXTRACTOR_MODEL=qwen2.5:14b
@@ -75,7 +76,8 @@ ollama pull qwen2.5:7b
 venv/bin/python python/agentes_nf3e.py
 ```
 
-Por padrão, o script lê `texto_aws.txt` na raiz. Para usar outro arquivo e, opcionalmente, identificar a origem nos metadados:
+Por padrão, o script lê `texto_aws.txt` na raiz. Para usar outro arquivo e,
+opcionalmente, identificar a origem nos metadados:
 
 ```bash
 venv/bin/python python/agentes_nf3e.py \
@@ -83,6 +85,19 @@ venv/bin/python python/agentes_nf3e.py \
   --cod-empresa EMPRESA \
   --cod-extracao 123
 ```
+
+Para consultar o registro no MySQL, recuperar o texto no Textract e executar os
+dois agentes:
+
+```bash
+venv/bin/python python/agentes_nf3e.py \
+  --banco \
+  --cod-empresa EMPRESA \
+  --cod-extracao 123
+```
+
+A consulta ao MySQL usa uma transação somente leitura. O resultado é impresso em
+JSON, mas não é gravado no banco.
 
 O JSON final é enviado para `stdout`. Falhas técnicas são enviadas para `stderr`, o que permite salvar somente a resposta válida:
 
@@ -105,4 +120,3 @@ logs/agentes_nf3e_validacao.log
 ```
 
 Cada registro contém data e hora em UTC, empresa e extração opcionais, arquivo de origem, modelos utilizados, `campos_errados`, detalhes dos erros e observações. O texto completo do arquivo da AWS e o bloco completo de `dados_extraidos` não são gravados nesse arquivo.
-
