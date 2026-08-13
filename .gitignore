@@ -1,9 +1,41 @@
+# Segredos e configurações locais
 .env
-/benchmarks/private/
-/benchmarks/results/
-/logs/*.log
-*.tmp
-*.cache
+.env.*
+!.env.example
+
+# Python
 venv/
+.venv/
+env/
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Dependências PHP instaladas pelo Composer
+/vendor/
+
+# Logs e resultados gerados
+/logs/*
+!/logs/.gitkeep
+/resultado*.json
+/texto_aws.*
+
+# Faturas e arquivos potencialmente sensíveis
+*.pdf
+
+# Temporários
+*.tmp
+*.cache
+
+# Sistema operacional e editores
+.DS_Store
+.idea/
+.vscode/
+
+# Dados privados de benchmark
+/benchmarks/private/
+/benchmarks/results/
