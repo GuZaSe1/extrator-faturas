@@ -136,6 +136,17 @@ def fGeraRespostaIa(configuracao, texto_documento, imagem_base64):
     resposta.raise_for_status()
 
     dados_resposta = resposta.json()
+
+    # print(
+    #     "\nOLLAMA:",
+    #     f"\nTotal: {dados_resposta.get('total_duration', 0) / 1e9:.2f}s",
+    #     f"\nLoad: {dados_resposta.get('load_duration', 0) / 1e9:.2f}s",
+    #     f"\nPrompt tokens: {dados_resposta.get('prompt_eval_count')}",
+    #     f"\nPrompt: {dados_resposta.get('prompt_eval_duration', 0) / 1e9:.2f}s",
+    #     f"\nOutput tokens: {dados_resposta.get('eval_count')}",
+    #     f"\nGeração: {dados_resposta.get('eval_duration', 0) / 1e9:.2f}s",
+    # )
+
     json_bruto = dados_resposta.get("response")
 
     if not isinstance(json_bruto, str):
@@ -144,90 +155,171 @@ def fGeraRespostaIa(configuracao, texto_documento, imagem_base64):
     return json_bruto
 
 
-inicio_total = perf_counter()
-configuracao = fCarregaConfiguracaoAmbiente()
-cod_empresa = input("cod_empresa: ").strip()
-cod_extracao = int(input("cod_extracao: ").strip())
+def main():
+    configuracao = fCarregaConfiguracaoAmbiente()
+    quantidade_processada = 0
+    quantidade_erros = 0
 
-query = """SELECT fila.cod_empresa,
-                  fila.cod_extracao,
-                  fila.cod_job_extracao,
-                  fila.cod_usr_cadastro,
-                  fila.dat_cadastro,
-                  imagem.json_dados AS json_imagem
-             FROM prt_fila_arquivo_extracao_dados AS fila
-        LEFT JOIN prt_fila_arquivo_extracao_dados_json AS imagem ON imagem.cod_empresa = fila.cod_empresa
-                                                                AND imagem.cod_extracao = fila.cod_extracao
-                                                                AND imagem.tip_origem = 'B'
-            WHERE fila.cod_empresa = %(cod_empresa)s
-              AND fila.cod_extracao = %(cod_extracao)s
-            LIMIT 1"""
+    while True:
+        with mysql.connector.connect(**configuracao["banco"]) as conexao:
+            with conexao.cursor(dictionary=True) as cursor:
 
-parametros = {
-    "cod_empresa": cod_empresa,
-    "cod_extracao": cod_extracao,
-}
+                query = """SELECT fila.cod_empresa,
+                                  fila.cod_extracao,
+                                  fila.cod_job_extracao,
+                                  fila.cod_usr_cadastro,
+                                  fila.dat_cadastro
+                             FROM prt_fila_arquivo_extracao_dados AS fila
+                       INNER JOIN prt_fila_arquivo_extracao_dados_json AS origem ON origem.cod_empresa = fila.cod_empresa
+                                                                                AND origem.cod_extracao = fila.cod_extracao
+                                                                                AND origem.tip_origem = 'B'
+                        LEFT JOIN prt_fila_arquivo_extracao_dados_json AS processada ON processada.cod_empresa = fila.cod_empresa
+                                                                                    AND processada.cod_extracao = fila.cod_extracao
+                                                                                    AND processada.tip_origem = 'S'
+                            WHERE fila.dat_cadastro >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+                              AND processada.cod_empresa IS NULL
+                         ORDER BY fila.dat_cadastro ASC,
+                                  fila.cod_empresa ASC,
+                                  fila.cod_extracao ASC
+                            LIMIT 1"""
 
-with mysql.connector.connect(**configuracao["banco"]) as conexao:
-    cursor = conexao.cursor(dictionary=True)
-    cursor.execute(query, parametros)
-    registro = cursor.fetchone()
+                cursor.execute(query)
+                registro = cursor.fetchone()
 
-imagem_base64 = fValidaENormalizaImagemBase64(registro["json_imagem"])
-print("Imagem do banco carregada")
+                if registro is not None:
 
-job_id = str(registro["cod_job_extracao"] or "").strip()
-if not job_id:
-    raise RuntimeError("Registro sem Job ID do Textract")
+                    query_base64 = """SELECT json_dados AS json_imagem
+                                        FROM prt_fila_arquivo_extracao_dados_json
+                                       WHERE cod_empresa = %(cod_empresa)s
+                                         AND cod_extracao = %(cod_extracao)s
+                                         AND tip_origem = 'B'"""
 
-inicio = perf_counter()
-situacao_textract, texto_documento = fExtraiTextoTextract(configuracao, job_id)
+                    parametros_base64 = {
+                        "cod_empresa": registro["cod_empresa"],
+                        "cod_extracao": registro["cod_extracao"],
+                    }
 
-print(f"Textract: {situacao_textract} " f"({perf_counter() - inicio:.2f}s)")
+                    cursor.execute(query_base64, parametros_base64)
+                    imagem = cursor.fetchone()
 
-if situacao_textract != "SUCCEEDED":
-    print(f"Tempo total: {perf_counter() - inicio_total:.2f}s")
-    raise SystemExit(1)
+                    if imagem is None:
+                        raise RuntimeError("Imagem B não encontrada para o registro")
 
-inicio = perf_counter()
+                    registro["json_imagem"] = imagem["json_imagem"]
 
-resultado = json.loads(fGeraRespostaIa(configuracao, texto_documento, imagem_base64))
+        if registro is None:
+            print(
+                f"Fila concluída: {quantidade_processada} registro(s), "
+                f"{quantidade_erros} erro(s)."
+            )
+            break
 
-print(f"Ollama: JSON válido ({perf_counter() - inicio:.2f}s)")
-print("\nResultado:")
-print(json.dumps(resultado, ensure_ascii=False, indent=2))
-print(f"\nTempo total: {perf_counter() - inicio_total:.2f}s")
+        identificador = f"{registro['cod_empresa']}/{registro['cod_extracao']}"
+        print(f"Processando: {identificador}", flush=True)
 
-if input("\nSalvar resultado no banco? [s/N]: ").strip().lower() != "s":
-    print("Gravação cancelada. Nenhum registro foi alterado.")
-    raise SystemExit(0)
+        inicio_processamento = perf_counter()
+        processamento_com_erro = False
 
-query = """INSERT INTO prt_fila_arquivo_extracao_dados_json (
-                       cod_empresa,
-                       cod_extracao,
-                       json_dados,
-                       tip_origem,
-                       cod_usr_cadastro,
-                       dat_cadastro
-              ) VALUES (
-                       %(cod_empresa)s,
-                       %(cod_extracao)s,
-                       %(json_dados)s,
-                       'S',
-                       %(cod_usr_cadastro)s,
-                       %(dat_cadastro)s)"""
+        try:
+            imagem_base64 = fValidaENormalizaImagemBase64(registro["json_imagem"])
 
-parametros = {
-    "cod_empresa": registro["cod_empresa"],
-    "cod_extracao": registro["cod_extracao"],
-    "json_dados": json.dumps(resultado, ensure_ascii=False),
-    "cod_usr_cadastro": registro["cod_usr_cadastro"],
-    "dat_cadastro": registro["dat_cadastro"],
-}
+            job_id = str(registro["cod_job_extracao"] or "").strip()
 
-with mysql.connector.connect(**configuracao["banco"]) as conexao:
-    cursor = conexao.cursor()
-    cursor.execute(query, parametros)
-    conexao.commit()
+            if not job_id:
+                raise RuntimeError("Registro sem Job ID do Textract")
 
-print(f"Registro salvo: {registro['cod_empresa']}/" f"{registro['cod_extracao']}/S")
+            situacao_textract, texto_documento = fExtraiTextoTextract(
+                configuracao, job_id
+            )
+
+            if situacao_textract != "SUCCEEDED":
+                raise RuntimeError(f"Textract retornou o status {situacao_textract}")
+
+            resultado = json.loads(
+                fGeraRespostaIa(configuracao, texto_documento, imagem_base64)
+            )
+
+            if not isinstance(resultado, dict):
+                raise RuntimeError("Resposta do Ollama deve conter um objeto JSON")
+
+        except Exception as erro:
+            processamento_com_erro = True
+            resultado = {
+                "erro": {
+                    "tipo": type(erro).__name__,
+                    "mensagem": str(erro),
+                }
+            }
+
+        resultado["tempo_processamento_segundos"] = round(
+            perf_counter() - inicio_processamento, 2
+        )
+
+        with mysql.connector.connect(**configuracao["banco"]) as conexao:
+            with conexao.cursor() as cursor:
+                try:
+
+                    query_insert = """INSERT INTO prt_fila_arquivo_extracao_dados_json (
+                                                  cod_empresa,
+                                                  cod_extracao,
+                                                  json_dados,
+                                                  tip_origem,
+                                                  cod_usr_cadastro,
+                                                  dat_cadastro
+                                         ) VALUES (
+                                                  %(cod_empresa)s,
+                                                  %(cod_extracao)s,
+                                                  %(json_dados)s,
+                                                  'S',
+                                                  %(cod_usr_cadastro)s,
+                                                  %(dat_cadastro)s)"""
+
+                    parametros_insert = {
+                        "cod_empresa": registro["cod_empresa"],
+                        "cod_extracao": registro["cod_extracao"],
+                        "json_dados": json.dumps(resultado, ensure_ascii=False),
+                        "cod_usr_cadastro": registro["cod_usr_cadastro"],
+                        "dat_cadastro": registro["dat_cadastro"],
+                    }
+
+                    cursor.execute(query_insert, parametros_insert)
+
+                    if not processamento_com_erro:
+
+                        query_delete = """DELETE FROM prt_fila_arquivo_extracao_dados_json
+                                                WHERE cod_empresa = %(cod_empresa)s
+                                                  AND cod_extracao = %(cod_extracao)s
+                                                  AND tip_origem = 'B'"""
+
+                        parametros_delete = {
+                            "cod_empresa": registro["cod_empresa"],
+                            "cod_extracao": registro["cod_extracao"],
+                        }
+
+                        cursor.execute(query_delete, parametros_delete)
+
+                    conexao.commit()
+
+                except Exception:
+                    if conexao.is_connected():
+                        conexao.rollback()
+                    raise
+
+        quantidade_processada += 1
+        tempo = resultado["tempo_processamento_segundos"]
+
+        if processamento_com_erro:
+            quantidade_erros += 1
+            print(
+                f"Erro salvo: {identificador} - "
+                f"{resultado['erro']['tipo']}: {resultado['erro']['mensagem']} "
+                f"({tempo:.2f}s)"
+            )
+        else:
+            print(f"Finalizado: {identificador} ({tempo:.2f}s)")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
