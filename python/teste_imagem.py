@@ -35,13 +35,54 @@ def fCarregaConfiguracaoAmbiente():
     }
 
 
-def fExtraiTextoTextract(configuracao, job_id):
-    cliente = boto3.client(
-        "textract",
-        region_name=configuracao["regiao_textract"],
-    )
+def fMontaLinhaEspacial(bloco_linha, blocos_por_id):
+    palavras = []
 
-    paginas = {}
+    for relacionamento in bloco_linha.get("Relationships", []):
+        if relacionamento.get("Type") != "CHILD":
+            continue
+
+        for bloco_id in relacionamento.get("Ids", []):
+            bloco = blocos_por_id.get(bloco_id)
+
+            if not bloco or bloco.get("BlockType") != "WORD":
+                continue
+
+            caixa = bloco["Geometry"]["BoundingBox"]
+
+            palavras.append((caixa["Left"], bloco.get("Text", "").strip()))
+
+    if not palavras:
+        return bloco_linha.get("Text", "").strip()
+
+    palavras.sort(key=lambda item: item[0])
+
+    linha = []
+    posicao_atual = 0
+
+    for left, texto in palavras:
+        if not texto:
+            continue
+
+        posicao_desejada = round(left * 140)
+        posicao_desejada = max(posicao_desejada, posicao_atual + (1 if linha else 0))
+
+        quantidade_espacos = max(0, posicao_desejada - posicao_atual)
+
+        if quantidade_espacos:
+            linha.append(" " * quantidade_espacos)
+
+        linha.append(texto)
+        posicao_atual = posicao_desejada + len(texto)
+
+    return "".join(linha).rstrip()
+
+
+def fExtraiTextoTextract(configuracao, job_id):
+    cliente = boto3.client("textract", region_name=configuracao["regiao_textract"])
+
+    blocos_por_id = {}
+    linhas_por_pagina = {}
     proximo_token = None
 
     while True:
@@ -60,18 +101,14 @@ def fExtraiTextoTextract(configuracao, job_id):
             return situacao, None
 
         for bloco in resposta.get("Blocks", []):
-            if bloco["BlockType"] != "LINE":
-                continue
+            bloco_id = bloco.get("Id")
 
-            caixa = bloco["Geometry"]["BoundingBox"]
+            if bloco_id:
+                blocos_por_id[bloco_id] = bloco
 
-            paginas.setdefault(bloco["Page"], []).append(
-                (
-                    caixa["Top"],
-                    caixa["Left"],
-                    bloco["Text"].strip(),
-                )
-            )
+            if bloco.get("BlockType") == "LINE":
+                numero_pagina = bloco.get("Page", 1)
+                linhas_por_pagina.setdefault(numero_pagina, []).append(bloco)
 
         proximo_token = resposta.get("NextToken")
 
@@ -80,9 +117,24 @@ def fExtraiTextoTextract(configuracao, job_id):
 
     textos_paginas = []
 
-    for numero_pagina in sorted(paginas):
-        linhas = sorted(paginas[numero_pagina])
-        textos_paginas.append("\n".join(linha[2] for linha in linhas))
+    for numero_pagina in sorted(linhas_por_pagina):
+        linhas = sorted(
+            linhas_por_pagina[numero_pagina],
+            key=lambda bloco: (
+                bloco["Geometry"]["BoundingBox"]["Top"],
+                bloco["Geometry"]["BoundingBox"]["Left"],
+            ),
+        )
+
+        texto_pagina = [f"--- PÁGINA {numero_pagina} ---"]
+
+        for linha in linhas:
+            texto_linha = fMontaLinhaEspacial(linha, blocos_por_id)
+
+            if texto_linha:
+                texto_pagina.append(texto_linha)
+
+        textos_paginas.append("\n".join(texto_pagina))
 
     texto_documento = "\n\n".join(textos_paginas).strip()
 
@@ -137,14 +189,20 @@ def fGeraRespostaIa(configuracao, texto_documento, imagem_base64):
 
     dados_resposta = resposta.json()
 
+    # eval_count = dados_resposta.get("eval_count", 0)
+    # eval_duration = dados_resposta.get("eval_duration", 0) / 1e9
+
+    # velocidade = eval_count / eval_duration if eval_duration > 0 else 0
+
     # print(
     #     "\nOLLAMA:",
     #     f"\nTotal: {dados_resposta.get('total_duration', 0) / 1e9:.2f}s",
     #     f"\nLoad: {dados_resposta.get('load_duration', 0) / 1e9:.2f}s",
     #     f"\nPrompt tokens: {dados_resposta.get('prompt_eval_count')}",
     #     f"\nPrompt: {dados_resposta.get('prompt_eval_duration', 0) / 1e9:.2f}s",
-    #     f"\nOutput tokens: {dados_resposta.get('eval_count')}",
-    #     f"\nGeração: {dados_resposta.get('eval_duration', 0) / 1e9:.2f}s",
+    #     f"\nOutput tokens: {eval_count}",
+    #     f"\nGeração: {eval_duration:.2f}s",
+    #     f"\nVelocidade: {velocidade:.2f} tokens/s",
     # )
 
     json_bruto = dados_resposta.get("response")
