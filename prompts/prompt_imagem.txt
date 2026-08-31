@@ -73,9 +73,30 @@ REGRAS IMPORTANTES:
 22. Só use um preço unitário sem tributos se NÃO existir nenhum preço unitário com tributos para aquele produto e a coluna representar claramente o preço unitário aplicável ao item.
 23. Não use colunas de PIS, PASEP, PIS/COFINS, Base Calc, Alíquota ou ICMS como preço ou valor do produto.
 24. A posição visual e o alinhamento horizontal das palavras têm prioridade para definir a qual coluna cada valor pertence.
-25. Se uma coluna estiver vazia em uma linha de produto, retorne null para esse campo. Não desloque valores de colunas seguintes para preencher o espaço vazio.
-26. Um produto pode possuir somente descrição e valor. Nesse caso, "unidade", "quantidade" e "preco" devem ser null.
-27. Valores pertencentes a tributos, base de cálculo, alíquota ou outras colunas auxiliares nunca devem ser usados para preencher "quantidade", "preco" ou "valor".
+
+25. Se uma coluna estiver vazia em uma linha de produto, retorne null para esse campo.
+    Não desloque os valores seguintes para a esquerda.
+
+    IMPORTANTE:
+    - Determine cada valor pela posição horizontal em relação ao cabeçalho da tabela, e não pela ordem dos números encontrados na linha.
+    - O primeiro número encontrado após a descrição não é necessariamente a quantidade ou o preço.
+    - Colunas vazias devem continuar vazias mesmo quando houver números em colunas posteriores.
+    - Valores "0,000" e "0,00000" são valores válidos e não devem ser tratados como campos ausentes.
+
+26. Um produto pode possuir qualquer combinação de campos preenchidos.
+    Não presuma que unidade, quantidade ou preço existem.
+
+    Exemplos:
+    - descrição + valor → unidade, quantidade e preco = null.
+    - descrição + quantidade + preço + valor → associe cada campo normalmente.
+    - valores zero como "0,000" ou "0,00000" devem ser preservados e associados à sua coluna.
+
+27. Para identificar quantidade, preço e valor:
+    1. Localize visualmente o cabeçalho da tabela.
+    2. Compare a posição horizontal de cada número da linha com as colunas do cabeçalho.
+    3. Preencha somente o campo correspondente àquela coluna.
+    4. Nunca use PIS/COFINS, Base de Cálculo, ICMS, Alíquota ou Tarifa Unitária para preencher uma coluna anterior vazia.
+    
 28. Não una descrições de produtos que estejam em linhas visuais diferentes.
 29. Se um valor negativo estiver representado com o sinal após o número, por exemplo "5,02-", normalize para "-5,02".
 
@@ -88,6 +109,19 @@ REGRAS IMPORTANTES:
     - zeros à esquerda.
     A única alteração permitida na representação numérica é mover o sinal negativo do final para o início, conforme a regra 29.
     Nunca interprete ou reformate o número com base no valor matemático.
+
+31. Priorize sempre os valores apresentados diretamente na fatura.
+    Cálculos podem ser usados apenas como apoio para conferir a associação entre quantidade, preço e valor, nunca para inventar dados que não estejam presentes na fonte.
+
+32. Para o campo "valor" de cada produto, priorize o valor apresentado na linha ou região visual correspondente ao produto.
+    Use quantidade e preço apenas como evidência auxiliar para confirmar que o valor foi associado ao produto correto.
+
+33. Para o campo "preco", priorize o preço unitário COM TRIBUTOS quando ele estiver disponível.
+    Use a estrutura da tabela, o alinhamento visual e a coerência com quantidade e valor para identificar a coluna correta.
+    Não substitua um preço explicitamente apresentado apenas para fazer um cálculo coincidir.
+
+34. Para "val_total", priorize o valor total explicitamente apresentado na fatura.
+    Cálculos podem ser usados apenas como conferência, mas não devem substituir o total informado no documento.
 
 ESTRUTURA OBRIGATÓRIA:
 
