@@ -9,6 +9,8 @@ import mysql.connector
 import requests
 from dotenv import load_dotenv
 
+DEBUG = True
+
 RAIZ_PROJETO = Path(__file__).resolve().parent.parent
 
 CAMINHO_ENV = RAIZ_PROJETO / "python" / ".env"
@@ -35,54 +37,10 @@ def fCarregaConfiguracaoAmbiente():
     }
 
 
-def fMontaLinhaEspacial(bloco_linha, blocos_por_id):
-    palavras = []
-
-    for relacionamento in bloco_linha.get("Relationships", []):
-        if relacionamento.get("Type") != "CHILD":
-            continue
-
-        for bloco_id in relacionamento.get("Ids", []):
-            bloco = blocos_por_id.get(bloco_id)
-
-            if not bloco or bloco.get("BlockType") != "WORD":
-                continue
-
-            caixa = bloco["Geometry"]["BoundingBox"]
-
-            palavras.append((caixa["Left"], bloco.get("Text", "").strip()))
-
-    if not palavras:
-        return bloco_linha.get("Text", "").strip()
-
-    palavras.sort(key=lambda item: item[0])
-
-    linha = []
-    posicao_atual = 0
-
-    for left, texto in palavras:
-        if not texto:
-            continue
-
-        posicao_desejada = round(left * 140)
-        posicao_desejada = max(posicao_desejada, posicao_atual + (1 if linha else 0))
-
-        quantidade_espacos = max(0, posicao_desejada - posicao_atual)
-
-        if quantidade_espacos:
-            linha.append(" " * quantidade_espacos)
-
-        linha.append(texto)
-        posicao_atual = posicao_desejada + len(texto)
-
-    return "".join(linha).rstrip()
-
-
 def fExtraiTextoTextract(configuracao, job_id):
     cliente = boto3.client("textract", region_name=configuracao["regiao_textract"])
 
-    blocos_por_id = {}
-    linhas_por_pagina = {}
+    linhas = []
     proximo_token = None
 
     while True:
@@ -101,42 +59,26 @@ def fExtraiTextoTextract(configuracao, job_id):
             return situacao, None
 
         for bloco in resposta.get("Blocks", []):
-            bloco_id = bloco.get("Id")
-
-            if bloco_id:
-                blocos_por_id[bloco_id] = bloco
-
             if bloco.get("BlockType") == "LINE":
-                numero_pagina = bloco.get("Page", 1)
-                linhas_por_pagina.setdefault(numero_pagina, []).append(bloco)
+                linhas.append(bloco)
 
         proximo_token = resposta.get("NextToken")
 
         if not proximo_token:
             break
 
-    textos_paginas = []
-
-    for numero_pagina in sorted(linhas_por_pagina):
-        linhas = sorted(
-            linhas_por_pagina[numero_pagina],
-            key=lambda bloco: (
-                bloco["Geometry"]["BoundingBox"]["Top"],
-                bloco["Geometry"]["BoundingBox"]["Left"],
-            ),
+    linhas.sort(
+        key=lambda bloco: (
+            bloco["Geometry"]["BoundingBox"]["Top"],
+            bloco["Geometry"]["BoundingBox"]["Left"],
         )
+    )
 
-        texto_pagina = [f"--- PÁGINA {numero_pagina} ---"]
-
-        for linha in linhas:
-            texto_linha = fMontaLinhaEspacial(linha, blocos_por_id)
-
-            if texto_linha:
-                texto_pagina.append(texto_linha)
-
-        textos_paginas.append("\n".join(texto_pagina))
-
-    texto_documento = "\n\n".join(textos_paginas).strip()
+    texto_documento = "\n".join(
+        bloco.get("Text", "").strip()
+        for bloco in linhas
+        if bloco.get("Text", "").strip()
+    )
 
     return "SUCCEEDED", texto_documento
 
@@ -153,7 +95,7 @@ def fValidaENormalizaImagemBase64(json_dados):
     if not conteudo.startswith(b"\xff\xd8\xff"):
         raise RuntimeError("json_dados do registro B não contém uma imagem JPEG")
 
-    return base64.b64encode(conteudo).decode("ascii")
+    return imagem_base64
 
 
 def fGeraRespostaIa(configuracao, texto_documento, imagem_base64):
@@ -189,21 +131,22 @@ def fGeraRespostaIa(configuracao, texto_documento, imagem_base64):
 
     dados_resposta = resposta.json()
 
-    # eval_count = dados_resposta.get("eval_count", 0)
-    # eval_duration = dados_resposta.get("eval_duration", 0) / 1e9
+    if DEBUG is True:
+        eval_count = dados_resposta.get("eval_count", 0)
+        eval_duration = dados_resposta.get("eval_duration", 0) / 1e9
 
-    # velocidade = eval_count / eval_duration if eval_duration > 0 else 0
+        velocidade = eval_count / eval_duration if eval_duration > 0 else 0
 
-    # print(
-    #     "\nOLLAMA:",
-    #     f"\nTotal: {dados_resposta.get('total_duration', 0) / 1e9:.2f}s",
-    #     f"\nLoad: {dados_resposta.get('load_duration', 0) / 1e9:.2f}s",
-    #     f"\nPrompt tokens: {dados_resposta.get('prompt_eval_count')}",
-    #     f"\nPrompt: {dados_resposta.get('prompt_eval_duration', 0) / 1e9:.2f}s",
-    #     f"\nOutput tokens: {eval_count}",
-    #     f"\nGeração: {eval_duration:.2f}s",
-    #     f"\nVelocidade: {velocidade:.2f} tokens/s",
-    # )
+        print(
+            "\nOLLAMA:",
+            f"\nTotal: {dados_resposta.get('total_duration', 0) / 1e9:.2f}s",
+            f"\nLoad: {dados_resposta.get('load_duration', 0) / 1e9:.2f}s",
+            f"\nPrompt tokens: {dados_resposta.get('prompt_eval_count')}",
+            f"\nPrompt: {dados_resposta.get('prompt_eval_duration', 0) / 1e9:.2f}s",
+            f"\nOutput tokens: {eval_count}",
+            f"\nGeração: {eval_duration:.2f}s",
+            f"\nVelocidade: {velocidade:.2f} tokens/s",
+        )
 
     json_bruto = dados_resposta.get("response")
 
@@ -380,4 +323,4 @@ def main():
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
